@@ -1,0 +1,25 @@
+# Node
+node_modules/
+dist/
+
+# Environment
+.env
+
+# Auth Baileys
+auth_info/
+
+# Database
+data/*.db
+data/*.db-journal
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
