@@ -62,4 +62,43 @@ export const userRepository = {
             lastCountAt: row.last_count_at,
         };
     },
+
+    /**
+     * Recalcula estatísticas de todos os usuários baseado na tabela counts
+     * Usado para corrigir inconsistências
+     */
+    recalculateAll(): number {
+        const db = getDatabase();
+
+        const result = db.transaction(() => {
+            // 1. Limpa tabela de usuários
+            db.prepare('DELETE FROM users').run();
+
+            // 2. Agrupa contagens reais
+            const rows = db.prepare(`
+                SELECT 
+                    user_id, 
+                    user_name, 
+                    MAX(created_at) as last_seen,
+                    COUNT(*) as total
+                FROM counts 
+                GROUP BY user_id
+            `).all() as any[];
+
+            // 3. Reinsere usuários corretos
+            const insert = db.prepare(`
+                INSERT INTO users (id, name, total_count, last_count_at)
+                VALUES (?, ?, ?, ?)
+            `);
+
+            for (const row of rows) {
+                insert.run(row.user_id, row.user_name || 'Anônimo', row.total, row.last_seen);
+            }
+
+            return rows.length;
+        })();
+
+        return result;
+    },
+
 };

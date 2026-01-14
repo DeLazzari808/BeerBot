@@ -133,10 +133,37 @@ export async function handleCommand(
             await sendDailyRecap();
             break;
 
+        case 'recalc':
+        case 'sync':
+            await handleRecalc(jid, senderId, message);
+            break;
+
         default:
             // Comando desconhecido, ignora
             break;
     }
+}
+
+async function handleRecalc(
+    jid: string,
+    senderId: string,
+    message: proto.IWebMessageInfo
+): Promise<void> {
+    if (!isAdmin(senderId)) {
+        await replyToMessage(jid, '❌ Apenas admins podem usar este comando.', message);
+        return;
+    }
+
+    await replyToMessage(jid, '🔄 Recalculando estatísticas... aguarde.', message);
+
+    try {
+        const count = userRepository.recalculateAll();
+        await sendMessage(jid, `✅ Sincronização concluída!\n\n👥 ${count} usuários atualizados com base no histórico de cervejas.`);
+    } catch (error) {
+        console.error('Erro ao recalcular:', error);
+        await replyToMessage(jid, '❌ Erro ao recalcular estatísticas.', message);
+    }
+
 }
 
 async function handleStatus(jid: string): Promise<void> {
