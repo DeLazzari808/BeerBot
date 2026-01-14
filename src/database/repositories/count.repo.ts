@@ -176,8 +176,8 @@ export const countRepository = {
         const db = getDatabase();
 
         try {
-            // Deleta se já existir
-            db.prepare('DELETE FROM counts WHERE number = ?').run(number);
+            // Deleta números futuros e o atual para garantir consistência
+            db.prepare('DELETE FROM counts WHERE number >= ?').run(number);
 
             db.prepare(`
         INSERT INTO counts (number, user_id, user_name, message_id, has_image)

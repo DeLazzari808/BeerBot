@@ -6,6 +6,7 @@ import { userRepository } from '../database/repositories/user.repo.js';
 import { reactToMessage, replyToMessage } from '../services/whatsapp.js';
 import { logger } from '../utils/logger.js';
 import { handleCommand } from './command.handler.js';
+import { messageQueue } from '../utils/queue.js';
 
 /**
  * Extrai o texto da mensagem
@@ -84,17 +85,61 @@ export async function handleMessage(message: proto.IWebMessageInfo): Promise<voi
 
     // Se mandou imagem, processa automaticamente
     if (messageHasImage) {
-        const parsed = text ? parseCountFromMessage(text) : { success: false, number: null, raw: '' };
-        const currentCount = counterService.getCurrentCount();
-        const nextNumber = currentCount + 1;
+        await messageQueue.add(async () => {
+            const parsed = text ? parseCountFromMessage(text) : { success: false, number: null, raw: '' };
+            const currentCount = counterService.getCurrentCount();
+            const nextNumber = currentCount + 1;
 
-        // Caso 1: Foto SEM número - auto-conta
-        if (!parsed.success || parsed.number === null) {
+            // Caso 1: Foto SEM número - auto-conta
+            if (!parsed.success || parsed.number === null) {
+                const result = counterService.attemptCount({
+                    number: nextNumber,
+                    userId: senderId,
+                    userName: senderName,
+                    messageId: message.key?.id || undefined,
+                    hasImage: true,
+                });
+
+                if (result.success) {
+                    const userStats = userRepository.getStats(senderId);
+                    const totalBeers = userStats?.totalCount || 1;
+                    await replyToMessage(
+                        jid,
+                        `🍺 *#${nextNumber}* — ${senderName} (${totalBeers}ª)`,
+                        message
+                    );
+                    await celebrateIfMilestone(jid, nextNumber, senderName, message);
+                }
+                return;
+            }
+
+            // Caso 2: Foto COM número CERTO
+            if (parsed.number === nextNumber) {
+                const result = counterService.attemptCount({
+                    number: nextNumber,
+                    userId: senderId,
+                    userName: senderName,
+                    messageId: message.key?.id || undefined,
+                    hasImage: true,
+                });
+
+                if (result.success) {
+                    await reactToMessage(jid, message.key!, '✅');
+                    await celebrateIfMilestone(jid, nextNumber, senderName, message);
+                } else {
+                    // Alguém foi mais rápido
+                    const newNext = counterService.getCurrentCount() + 1;
+                    await autoCount(jid, newNext, senderId, senderName, message);
+                }
+                return;
+            }
+
+            // Caso 3: Foto COM número ERRADO - corrige automaticamente
             const result = counterService.attemptCount({
                 number: nextNumber,
                 userId: senderId,
                 userName: senderName,
-                messageId: message.key.id || undefined,
+                messageId: message.key?.id || undefined,
                 hasImage: true,
             });
 
@@ -103,54 +148,12 @@ export async function handleMessage(message: proto.IWebMessageInfo): Promise<voi
                 const totalBeers = userStats?.totalCount || 1;
                 await replyToMessage(
                     jid,
-                    `🍺 *#${nextNumber}* — ${senderName} (${totalBeers}ª)`,
+                    `⚠️ Ops! Era *#${nextNumber}*, não ${parsed.number}.\n🍺 Corrigido: *#${nextNumber}* — ${senderName} (${totalBeers}ª)`,
                     message
                 );
                 await celebrateIfMilestone(jid, nextNumber, senderName, message);
             }
-            return;
-        }
-
-        // Caso 2: Foto COM número CERTO
-        if (parsed.number === nextNumber) {
-            const result = counterService.attemptCount({
-                number: nextNumber,
-                userId: senderId,
-                userName: senderName,
-                messageId: message.key.id || undefined,
-                hasImage: true,
-            });
-
-            if (result.success) {
-                await reactToMessage(jid, message.key!, '✅');
-                await celebrateIfMilestone(jid, nextNumber, senderName, message);
-            } else {
-                // Alguém foi mais rápido
-                const newNext = counterService.getCurrentCount() + 1;
-                await autoCount(jid, newNext, senderId, senderName, message);
-            }
-            return;
-        }
-
-        // Caso 3: Foto COM número ERRADO - corrige automaticamente
-        const result = counterService.attemptCount({
-            number: nextNumber,
-            userId: senderId,
-            userName: senderName,
-            messageId: message.key.id || undefined,
-            hasImage: true,
         });
-
-        if (result.success) {
-            const userStats = userRepository.getStats(senderId);
-            const totalBeers = userStats?.totalCount || 1;
-            await replyToMessage(
-                jid,
-                `⚠️ Ops! Era *#${nextNumber}*, não ${parsed.number}.\n🍺 Corrigido: *#${nextNumber}* — ${senderName} (${totalBeers}ª)`,
-                message
-            );
-            await celebrateIfMilestone(jid, nextNumber, senderName, message);
-        }
         return;
     }
 
