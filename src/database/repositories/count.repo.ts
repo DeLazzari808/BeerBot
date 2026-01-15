@@ -135,7 +135,7 @@ export const countRepository = {
             .lte('created_at', endOfDay)
             .order('number', { ascending: true });
 
-        const numbers = rangeData?.map(r => r.number) || [];
+        const numbers = rangeData?.map((r: any) => r.number) || [];
         const startNumber = numbers[0] || 0;
         const endNumber = numbers[numbers.length - 1] || 0;
 
