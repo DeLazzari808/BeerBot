@@ -7,7 +7,7 @@ import { logger } from '../utils/logger.js';
  */
 export async function handleDelete(messageId: string, jid: string): Promise<void> {
     // Tenta encontrar e deletar a contagem associada
-    const deleted = countRepository.deleteByMessageId(messageId);
+    const deleted = await countRepository.deleteByMessageId(messageId);
 
     if (deleted) {
         logger.info({

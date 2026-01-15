@@ -1,5 +1,5 @@
 import { config } from './config/env.js';
-import { getDatabase, closeDatabase } from './database/sqlite.js';
+import { isSupabaseConfigured, testSupabaseConnection } from './database/supabase.js';
 import { connectWhatsApp, setMessageHandler, setDeleteHandler } from './services/whatsapp.js';
 import { handleMessage } from './handlers/message.handler.js';
 import { handleDelete } from './handlers/delete.handler.js';
@@ -10,17 +10,28 @@ import { logger } from './utils/logger.js';
 async function main(): Promise<void> {
     logger.info('🍺 Iniciando BeerBot...');
 
-    // Inicializa banco de dados
-    getDatabase();
+    // Verifica se Supabase está configurado
+    if (!isSupabaseConfigured()) {
+        logger.error('❌ Supabase não configurado! Configure SUPABASE_URL e SUPABASE_KEY no .env');
+        process.exit(1);
+    }
+
+    // Testa conexão com Supabase
+    const connected = await testSupabaseConnection();
+    if (!connected) {
+        logger.error('❌ Não foi possível conectar ao Supabase!');
+        process.exit(1);
+    }
+    logger.info('✅ Conectado ao Supabase');
 
     // Verifica se precisa definir contagem inicial
-    const currentCount = counterService.getCurrentCount();
+    const currentCount = await counterService.getCurrentCount();
     if (currentCount === 0 && config.initialCount > 0) {
-        counterService.setInitialCount(config.initialCount, 'system', 'Sistema');
+        await counterService.setInitialCount(config.initialCount, 'system', 'Sistema');
         logger.info(`📊 Contagem inicial definida: ${config.initialCount}`);
     }
 
-    logger.info(`📊 Contagem atual: ${counterService.getCurrentCount()}`);
+    logger.info(`📊 Contagem atual: ${await counterService.getCurrentCount()}`);
 
     // Registra handlers
     setMessageHandler(handleMessage);
@@ -38,7 +49,6 @@ async function main(): Promise<void> {
     const shutdown = () => {
         logger.info('👋 Encerrando bot...');
         stopDailyRecapScheduler();
-        closeDatabase();
         process.exit(0);
     };
 

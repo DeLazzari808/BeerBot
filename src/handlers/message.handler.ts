@@ -87,12 +87,12 @@ export async function handleMessage(message: proto.IWebMessageInfo): Promise<voi
     if (messageHasImage) {
         await messageQueue.add(async () => {
             const parsed = text ? parseCountFromMessage(text) : { success: false, number: null, raw: '' };
-            const currentCount = counterService.getCurrentCount();
+            const currentCount = await counterService.getCurrentCount();
             const nextNumber = currentCount + 1;
 
             // Caso 1: Foto SEM número - auto-conta
             if (!parsed.success || parsed.number === null) {
-                const result = counterService.attemptCount({
+                const result = await counterService.attemptCount({
                     number: nextNumber,
                     userId: senderId,
                     userName: senderName,
@@ -101,7 +101,7 @@ export async function handleMessage(message: proto.IWebMessageInfo): Promise<voi
                 });
 
                 if (result.success) {
-                    const userStats = userRepository.getStats(senderId);
+                    const userStats = await userRepository.getStats(senderId);
                     const totalBeers = userStats?.totalCount || 1;
                     await replyToMessage(
                         jid,
@@ -115,7 +115,7 @@ export async function handleMessage(message: proto.IWebMessageInfo): Promise<voi
 
             // Caso 2: Foto COM número CERTO
             if (parsed.number === nextNumber) {
-                const result = counterService.attemptCount({
+                const result = await counterService.attemptCount({
                     number: nextNumber,
                     userId: senderId,
                     userName: senderName,
@@ -128,14 +128,14 @@ export async function handleMessage(message: proto.IWebMessageInfo): Promise<voi
                     await celebrateIfMilestone(jid, nextNumber, senderName, message);
                 } else {
                     // Alguém foi mais rápido
-                    const newNext = counterService.getCurrentCount() + 1;
+                    const newNext = await counterService.getCurrentCount() + 1;
                     await autoCount(jid, newNext, senderId, senderName, message);
                 }
                 return;
             }
 
             // Caso 3: Foto COM número ERRADO - corrige automaticamente
-            const result = counterService.attemptCount({
+            const result = await counterService.attemptCount({
                 number: nextNumber,
                 userId: senderId,
                 userName: senderName,
@@ -144,7 +144,7 @@ export async function handleMessage(message: proto.IWebMessageInfo): Promise<voi
             });
 
             if (result.success) {
-                const userStats = userRepository.getStats(senderId);
+                const userStats = await userRepository.getStats(senderId);
                 const totalBeers = userStats?.totalCount || 1;
                 await replyToMessage(
                     jid,
@@ -182,7 +182,7 @@ async function autoCount(
     senderName: string,
     message: proto.IWebMessageInfo
 ): Promise<void> {
-    const result = counterService.attemptCount({
+    const result = await counterService.attemptCount({
         number,
         userId: senderId,
         userName: senderName,
@@ -210,7 +210,7 @@ async function celebrateIfMilestone(
     message: proto.IWebMessageInfo
 ): Promise<void> {
     if (number % 1000 === 0) {
-        const progress = counterService.getProgress();
+        const progress = await counterService.getProgress();
         await replyToMessage(
             jid,
             `🏆 *${number} CERVEJAS!* 🏆\n\n` +

@@ -1,4 +1,4 @@
-import { getDatabase } from '../sqlite.js';
+import { getSupabase } from '../supabase.js';
 
 export interface UserStats {
     id: string;
@@ -11,47 +11,148 @@ export const userRepository = {
     /**
      * Retorna estatísticas de um usuário
      */
-    getStats(userId: string): UserStats | null {
-        const db = getDatabase();
-        const row = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
-        return row ? this.mapRow(row) : null;
+    async getStats(userId: string): Promise<UserStats | null> {
+        const supabase = getSupabase();
+        const { data, error } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', userId)
+            .single();
+
+        if (error || !data) return null;
+        return this.mapRow(data);
     },
 
     /**
      * Retorna ranking dos top N usuários
      */
-    getTopN(n: number = 10): UserStats[] {
-        const db = getDatabase();
-        const rows = db.prepare(`
-      SELECT * FROM users 
-      ORDER BY total_count DESC 
-      LIMIT ?
-    `).all(n) as any[];
+    async getTopN(n: number = 10): Promise<UserStats[]> {
+        const supabase = getSupabase();
+        const { data, error } = await supabase
+            .from('users')
+            .select('*')
+            .order('total_count', { ascending: false })
+            .limit(n);
 
-        return rows.map(this.mapRow);
+        if (error || !data) return [];
+        return data.map(this.mapRow);
     },
 
     /**
      * Retorna posição do usuário no ranking
      */
-    getRank(userId: string): number {
-        const db = getDatabase();
-        const row = db.prepare(`
-      SELECT COUNT(*) + 1 as rank
-      FROM users
-      WHERE total_count > (SELECT total_count FROM users WHERE id = ?)
-    `).get(userId) as { rank: number } | undefined;
+    async getRank(userId: string): Promise<number> {
+        const supabase = getSupabase();
 
-        return row?.rank || 0;
+        // Primeiro pega o total do usuário
+        const { data: userRow } = await supabase
+            .from('users')
+            .select('total_count')
+            .eq('id', userId)
+            .single();
+
+        if (!userRow) return 0;
+
+        // Conta quantos têm mais cervejas
+        const { count } = await supabase
+            .from('users')
+            .select('*', { count: 'exact', head: true })
+            .gt('total_count', userRow.total_count);
+
+        return (count || 0) + 1;
     },
 
     /**
      * Retorna total de usuários participantes
      */
-    getTotalParticipants(): number {
-        const db = getDatabase();
-        const row = db.prepare('SELECT COUNT(*) as total FROM users').get() as { total: number };
-        return row.total;
+    async getTotalParticipants(): Promise<number> {
+        const supabase = getSupabase();
+        const { count } = await supabase
+            .from('users')
+            .select('*', { count: 'exact', head: true });
+
+        return count || 0;
+    },
+
+    /**
+     * Busca usuário por nome (parcial, case insensitive)
+     */
+    async findByName(name: string): Promise<UserStats | null> {
+        const supabase = getSupabase();
+        const { data } = await supabase
+            .from('users')
+            .select('*')
+            .ilike('name', `%${name}%`)
+            .limit(1)
+            .single();
+
+        if (!data) return null;
+        return this.mapRow(data);
+    },
+
+    /**
+     * Força o total de cervejas de um usuário (admin)
+     */
+    async setUserTotal(userId: string, total: number): Promise<boolean> {
+        const supabase = getSupabase();
+        const { error } = await supabase
+            .from('users')
+            .update({ total_count: total })
+            .eq('id', userId);
+
+        return !error;
+    },
+
+    /**
+     * Recalcula estatísticas de todos os usuários
+     * Chama a função SQL recalculate_all_users()
+     */
+    async recalculateAll(): Promise<number> {
+        const supabase = getSupabase();
+
+        // Executa recálculo via SQL direto
+        // Como não temos a função ainda, fazemos manualmente
+        const { data: counts } = await supabase
+            .from('counts')
+            .select('user_id, user_name, created_at');
+
+        if (!counts || counts.length === 0) return 0;
+
+        // Agrupa por usuário
+        const userMap = new Map<string, { name: string; count: number; lastAt: string }>();
+        for (const row of counts) {
+            const existing = userMap.get(row.user_id);
+            if (existing) {
+                existing.count++;
+                if (row.created_at > existing.lastAt) {
+                    existing.lastAt = row.created_at;
+                    if (row.user_name) existing.name = row.user_name;
+                }
+            } else {
+                userMap.set(row.user_id, {
+                    name: row.user_name || 'Anônimo',
+                    count: 1,
+                    lastAt: row.created_at,
+                });
+            }
+        }
+
+        // Limpa tabela users
+        await supabase.from('users').delete().neq('id', '');
+
+        // Reinsere
+        const usersToInsert = Array.from(userMap.entries()).map(([id, data]) => ({
+            id,
+            name: data.name,
+            total_count: data.count,
+            last_count_at: data.lastAt,
+        }));
+
+        if (usersToInsert.length > 0) {
+            await supabase.from('users').insert(usersToInsert);
+        }
+
+        return usersToInsert.length;
     },
 
     mapRow(row: any): UserStats {
@@ -62,43 +163,4 @@ export const userRepository = {
             lastCountAt: row.last_count_at,
         };
     },
-
-    /**
-     * Recalcula estatísticas de todos os usuários baseado na tabela counts
-     * Usado para corrigir inconsistências
-     */
-    recalculateAll(): number {
-        const db = getDatabase();
-
-        const result = db.transaction(() => {
-            // 1. Limpa tabela de usuários
-            db.prepare('DELETE FROM users').run();
-
-            // 2. Agrupa contagens reais
-            const rows = db.prepare(`
-                SELECT 
-                    user_id, 
-                    user_name, 
-                    MAX(created_at) as last_seen,
-                    COUNT(*) as total
-                FROM counts 
-                GROUP BY user_id
-            `).all() as any[];
-
-            // 3. Reinsere usuários corretos
-            const insert = db.prepare(`
-                INSERT INTO users (id, name, total_count, last_count_at)
-                VALUES (?, ?, ?, ?)
-            `);
-
-            for (const row of rows) {
-                insert.run(row.user_id, row.user_name || 'Anônimo', row.total, row.last_seen);
-            }
-
-            return rows.length;
-        })();
-
-        return result;
-    },
-
 };

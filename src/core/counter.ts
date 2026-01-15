@@ -23,15 +23,15 @@ export const counterService = {
     /**
      * Retorna a contagem atual
      */
-    getCurrentCount(): number {
+    async getCurrentCount(): Promise<number> {
         return countRepository.getLastCount();
     },
 
     /**
      * Tenta adicionar uma nova contagem
      */
-    attemptCount(attempt: CountAttempt): CountResponse {
-        const currentCount = this.getCurrentCount();
+    async attemptCount(attempt: CountAttempt): Promise<CountResponse> {
+        const currentCount = await this.getCurrentCount();
         const validation = validateSequence(attempt.number, currentCount);
 
         if (validation.status !== 'VALID') {
@@ -43,7 +43,7 @@ export const counterService = {
         }
 
         // Tenta inserir no banco
-        const record = countRepository.add({
+        const record = await countRepository.add({
             number: attempt.number,
             userId: attempt.userId,
             userName: attempt.userName,
@@ -53,7 +53,7 @@ export const counterService = {
 
         if (!record) {
             // Provavelmente alguém foi mais rápido
-            const newCurrentCount = this.getCurrentCount();
+            const newCurrentCount = await this.getCurrentCount();
             return {
                 success: false,
                 validation: {
@@ -83,8 +83,8 @@ export const counterService = {
     /**
      * Define contagem inicial
      */
-    setInitialCount(number: number, userId: string, userName?: string): boolean {
-        const success = countRepository.setInitialCount(number, userId, userName);
+    async setInitialCount(number: number, userId: string, userName?: string): Promise<boolean> {
+        const success = await countRepository.setInitialCount(number, userId, userName);
         if (success) {
             logger.info({ event: 'initial_count_set', number, userId });
         }
@@ -94,15 +94,15 @@ export const counterService = {
     /**
      * Força uma contagem (admin)
      */
-    forceCount(number: number, userId: string, userName?: string): boolean {
+    async forceCount(number: number, userId: string, userName?: string): Promise<boolean> {
         return countRepository.forceCount(number, userId, userName);
     },
 
     /**
      * Retorna progresso em direção à meta
      */
-    getProgress(): { current: number; goal: number; percentage: number } {
-        const current = this.getCurrentCount();
+    async getProgress(): Promise<{ current: number; goal: number; percentage: number }> {
+        const current = await this.getCurrentCount();
         const goal = 1_000_000;
         const percentage = Math.round((current / goal) * 10000) / 100;
 

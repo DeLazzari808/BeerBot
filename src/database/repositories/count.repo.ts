@@ -1,4 +1,4 @@
-import { getDatabase } from '../sqlite.js';
+import { getSupabase } from '../supabase.js';
 
 export interface CountRecord {
     id: number;
@@ -21,196 +21,254 @@ export interface CountInput {
 export const countRepository = {
     /**
      * Adiciona uma nova contagem
+     * O trigger do Supabase atualiza a tabela users automaticamente
      */
-    add(input: CountInput): CountRecord | null {
-        const db = getDatabase();
+    async add(input: CountInput): Promise<CountRecord | null> {
+        const supabase = getSupabase();
 
-        try {
-            const stmt = db.prepare(`
-        INSERT INTO counts (number, user_id, user_name, message_id, has_image)
-        VALUES (?, ?, ?, ?, ?)
-      `);
+        const { data, error } = await supabase
+            .from('counts')
+            .insert({
+                number: input.number,
+                user_id: input.userId,
+                user_name: input.userName || null,
+                message_id: input.messageId || null,
+                has_image: input.hasImage || false,
+            })
+            .select()
+            .single();
 
-            const result = stmt.run(
-                input.number,
-                input.userId,
-                input.userName || null,
-                input.messageId || null,
-                input.hasImage ? 1 : 0
-            );
-
-            // Atualiza contador do usuário
-            db.prepare(`
-        INSERT INTO users (id, name, total_count, last_count_at)
-        VALUES (?, ?, 1, CURRENT_TIMESTAMP)
-        ON CONFLICT(id) DO UPDATE SET
-          name = COALESCE(excluded.name, name),
-          total_count = total_count + 1,
-          last_count_at = CURRENT_TIMESTAMP
-      `).run(input.userId, input.userName || null);
-
-            return this.getById(result.lastInsertRowid as number);
-        } catch (error) {
+        if (error) {
             // Provavelmente número duplicado
+            console.error('[count.repo] Insert error:', error.message);
             return null;
         }
+
+        return this.mapRow(data);
     },
 
     /**
      * Busca contagem pelo ID
      */
-    getById(id: number): CountRecord | null {
-        const db = getDatabase();
-        const row = db.prepare('SELECT * FROM counts WHERE id = ?').get(id) as any;
-        return row ? this.mapRow(row) : null;
+    async getById(id: number): Promise<CountRecord | null> {
+        const supabase = getSupabase();
+        const { data, error } = await supabase
+            .from('counts')
+            .select('*')
+            .eq('id', id)
+            .single();
+
+        if (error || !data) return null;
+        return this.mapRow(data);
     },
 
     /**
-     * Retorna a última contagem
+     * Retorna a última contagem (maior número)
      */
-    getLastCount(): number {
-        const db = getDatabase();
-        const row = db.prepare(
-            'SELECT number FROM counts ORDER BY number DESC LIMIT 1'
-        ).get() as { number: number } | undefined;
+    async getLastCount(): Promise<number> {
+        const supabase = getSupabase();
+        const { data, error } = await supabase
+            .from('counts')
+            .select('number')
+            .order('number', { ascending: false })
+            .limit(1)
+            .single();
 
-        return row?.number || 0;
+        if (error || !data) return 0;
+        return data.number;
     },
 
     /**
      * Retorna as últimas N contagens para auditoria
      */
-    getLastN(n: number = 20): CountRecord[] {
-        const db = getDatabase();
-        const rows = db.prepare(`
-      SELECT * FROM counts ORDER BY number DESC LIMIT ?
-    `).all(n) as any[];
+    async getLastN(n: number = 20): Promise<CountRecord[]> {
+        const supabase = getSupabase();
+        const { data, error } = await supabase
+            .from('counts')
+            .select('*')
+            .order('number', { ascending: false })
+            .limit(n);
 
-        return rows.map(this.mapRow);
+        if (error || !data) return [];
+        return data.map(this.mapRow);
     },
 
     /**
      * Verifica se número já existe
      */
-    exists(number: number): boolean {
-        const db = getDatabase();
-        const row = db.prepare('SELECT 1 FROM counts WHERE number = ?').get(number);
-        return !!row;
+    async exists(number: number): Promise<boolean> {
+        const supabase = getSupabase();
+        const { data } = await supabase
+            .from('counts')
+            .select('id')
+            .eq('number', number)
+            .single();
+
+        return !!data;
     },
 
     /**
      * Retorna estatísticas do dia
      */
-    getDailyStats(date: string): {
+    async getDailyStats(date: string): Promise<{
         total: number;
         startNumber: number;
         endNumber: number;
         topContributors: { userId: string; userName: string; count: number }[];
-    } {
-        const db = getDatabase();
+    }> {
+        const supabase = getSupabase();
+        const startOfDay = `${date}T00:00:00`;
+        const endOfDay = `${date}T23:59:59`;
 
         // Total do dia
-        const totalRow = db.prepare(`
-      SELECT COUNT(*) as total 
-      FROM counts 
-      WHERE DATE(created_at) = ?
-    `).get(date) as { total: number };
+        const { count: total } = await supabase
+            .from('counts')
+            .select('*', { count: 'exact', head: true })
+            .gte('created_at', startOfDay)
+            .lte('created_at', endOfDay);
 
-        // Primeiro e último número do dia
-        const rangeRow = db.prepare(`
-      SELECT MIN(number) as startNumber, MAX(number) as endNumber
-      FROM counts 
-      WHERE DATE(created_at) = ?
-    `).get(date) as { startNumber: number; endNumber: number } | undefined;
+        // Range de números
+        const { data: rangeData } = await supabase
+            .from('counts')
+            .select('number')
+            .gte('created_at', startOfDay)
+            .lte('created_at', endOfDay)
+            .order('number', { ascending: true });
 
-        // Top contribuidores do dia
-        const topRows = db.prepare(`
-      SELECT user_id, user_name, COUNT(*) as count
-      FROM counts 
-      WHERE DATE(created_at) = ?
-      GROUP BY user_id
-      ORDER BY count DESC
-      LIMIT 5
-    `).all(date) as any[];
+        const numbers = rangeData?.map(r => r.number) || [];
+        const startNumber = numbers[0] || 0;
+        const endNumber = numbers[numbers.length - 1] || 0;
+
+        // Top contributors - precisamos agrupar manualmente
+        const { data: allDayCounts } = await supabase
+            .from('counts')
+            .select('user_id, user_name')
+            .gte('created_at', startOfDay)
+            .lte('created_at', endOfDay);
+
+        const contributorMap = new Map<string, { userName: string; count: number }>();
+        for (const row of allDayCounts || []) {
+            const existing = contributorMap.get(row.user_id);
+            if (existing) {
+                existing.count++;
+            } else {
+                contributorMap.set(row.user_id, {
+                    userName: row.user_name || 'Anônimo',
+                    count: 1,
+                });
+            }
+        }
+
+        const topContributors = Array.from(contributorMap.entries())
+            .map(([userId, data]) => ({ userId, ...data }))
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 5);
 
         return {
-            total: totalRow?.total || 0,
-            startNumber: rangeRow?.startNumber || 0,
-            endNumber: rangeRow?.endNumber || 0,
-            topContributors: topRows.map(r => ({
-                userId: r.user_id,
-                userName: r.user_name || 'Anônimo',
-                count: r.count,
-            })),
+            total: total || 0,
+            startNumber,
+            endNumber,
+            topContributors,
         };
     },
 
     /**
      * Define contagem inicial (para /setcount)
      */
-    setInitialCount(number: number, userId: string, userName?: string): boolean {
-        const db = getDatabase();
-
+    async setInitialCount(number: number, userId: string, userName?: string): Promise<boolean> {
         // Só permite se não houver contagens
-        const existing = this.getLastCount();
+        const existing = await this.getLastCount();
         if (existing > 0) {
             return false;
         }
 
-        try {
-            db.prepare(`
-        INSERT INTO counts (number, user_id, user_name, message_id, has_image)
-        VALUES (?, ?, ?, 'initial', 0)
-      `).run(number, userId, userName || 'Sistema');
+        const supabase = getSupabase();
+        const { error } = await supabase
+            .from('counts')
+            .insert({
+                number,
+                user_id: userId,
+                user_name: userName || 'Sistema',
+                message_id: 'initial',
+                has_image: false,
+            });
 
-            return true;
-        } catch {
-            return false;
-        }
+        return !error;
     },
 
     /**
      * Força uma contagem específica (admin only)
+     * Deleta números >= number e insere o novo
      */
-    forceCount(number: number, userId: string, userName?: string): boolean {
-        const db = getDatabase();
+    async forceCount(number: number, userId: string, userName?: string): Promise<boolean> {
+        const supabase = getSupabase();
 
-        try {
-            // Deleta números futuros e o atual para garantir consistência
-            db.prepare('DELETE FROM counts WHERE number >= ?').run(number);
+        // Deleta números futuros
+        await supabase
+            .from('counts')
+            .delete()
+            .gte('number', number);
 
-            db.prepare(`
-        INSERT INTO counts (number, user_id, user_name, message_id, has_image)
-        VALUES (?, ?, ?, 'forced', 0)
-      `).run(number, userId, userName || 'Admin');
+        // Insere novo
+        const { error } = await supabase
+            .from('counts')
+            .insert({
+                number,
+                user_id: userId,
+                user_name: userName || 'Admin',
+                message_id: 'forced',
+                has_image: false,
+            });
 
-            return true;
-        } catch {
-            return false;
-        }
+        return !error;
     },
 
     /**
      * Deleta contagem por message_id (quando usuário apaga a mensagem)
+     * O trigger ajusta o ranking automaticamente
      */
-    deleteByMessageId(messageId: string): CountRecord | null {
-        const db = getDatabase();
+    async deleteByMessageId(messageId: string): Promise<CountRecord | null> {
+        const supabase = getSupabase();
 
         // Busca o registro antes de deletar
-        const record = db.prepare(
-            'SELECT * FROM counts WHERE message_id = ?'
-        ).get(messageId) as any;
+        const { data: record } = await supabase
+            .from('counts')
+            .select('*')
+            .eq('message_id', messageId)
+            .single();
 
         if (!record) return null;
 
-        // Deleta o registro
-        db.prepare('DELETE FROM counts WHERE message_id = ?').run(messageId);
+        // Deleta o registro - trigger ajusta users
+        await supabase
+            .from('counts')
+            .delete()
+            .eq('message_id', messageId);
 
-        // Atualiza contador do usuário
-        db.prepare(`
-      UPDATE users SET total_count = total_count - 1
-      WHERE id = ? AND total_count > 0
-    `).run(record.user_id);
+        return this.mapRow(record);
+    },
+
+    /**
+     * Deleta contagem por número (comando /del)
+     * O trigger ajusta o ranking automaticamente
+     */
+    async deleteByNumber(number: number): Promise<CountRecord | null> {
+        const supabase = getSupabase();
+
+        // Busca o registro antes de deletar
+        const { data: record } = await supabase
+            .from('counts')
+            .select('*')
+            .eq('number', number)
+            .single();
+
+        if (!record) return null;
+
+        // Deleta o registro - trigger ajusta users
+        await supabase
+            .from('counts')
+            .delete()
+            .eq('number', number);
 
         return this.mapRow(record);
     },

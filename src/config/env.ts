@@ -24,6 +24,12 @@ export const config = {
 
     // Prefixo de comandos
     commandPrefix: '/',
+
+    // Supabase
+    supabase: {
+        url: process.env.SUPABASE_URL || '',
+        key: process.env.SUPABASE_KEY || '',
+    },
 };
 
 export type Config = typeof config;

@@ -72,7 +72,8 @@ export async function handleCommand(
         case 'rank':
         case 'ranking':
         case 'top':
-            if (!isStatsTimeAllowed()) {
+            // Ranking só depois das 18h para não-admins
+            if (!isAdmin(senderId) && !isStatsTimeAllowed()) {
                 await replyToMessage(jid, STATS_BLOCKED_MESSAGE, message);
                 break;
             }
@@ -82,19 +83,13 @@ export async function handleCommand(
         case 'meu':
         case 'me':
         case 'stats':
-            if (!isStatsTimeAllowed()) {
-                await replyToMessage(jid, STATS_BLOCKED_MESSAGE, message);
-                break;
-            }
+            // /meu liberado a qualquer hora para todos
             await handleMyStats(jid, senderId, senderName, message);
             break;
 
         case 'elo':
         case 'elos':
-            if (!isStatsTimeAllowed()) {
-                await replyToMessage(jid, STATS_BLOCKED_MESSAGE, message);
-                break;
-            }
+            // /elo liberado a qualquer hora para todos
             await handleElos(jid);
             break;
 
@@ -138,6 +133,15 @@ export async function handleCommand(
             await handleRecalc(jid, senderId, message);
             break;
 
+        case 'del':
+        case 'deletar':
+            await handleDeleteCount(jid, args, senderId, message);
+            break;
+
+        case 'setuser':
+            await handleSetUser(jid, args, senderId, message);
+            break;
+
         default:
             // Comando desconhecido, ignora
             break;
@@ -157,7 +161,7 @@ async function handleRecalc(
     await replyToMessage(jid, '🔄 Recalculando estatísticas... aguarde.', message);
 
     try {
-        const count = userRepository.recalculateAll();
+        const count = await userRepository.recalculateAll();
         await sendMessage(jid, `✅ Sincronização concluída!\n\n👥 ${count} usuários atualizados com base no histórico de cervejas.`);
     } catch (error) {
         console.error('Erro ao recalcular:', error);
@@ -167,8 +171,8 @@ async function handleRecalc(
 }
 
 async function handleStatus(jid: string): Promise<void> {
-    const progress = counterService.getProgress();
-    const participants = userRepository.getTotalParticipants();
+    const progress = await counterService.getProgress();
+    const participants = await userRepository.getTotalParticipants();
 
     const remaining = progress.goal - progress.current;
     const beersPerDay = Math.ceil(remaining / getDaysRemaining());
@@ -186,7 +190,7 @@ async function handleStatus(jid: string): Promise<void> {
 }
 
 async function handleRanking(jid: string): Promise<void> {
-    const top = userRepository.getTopN(10);
+    const top = await userRepository.getTopN(10);
 
     if (top.length === 0) {
         await sendMessage(jid, '📊 Nenhuma contagem registrada ainda!');
@@ -214,15 +218,15 @@ async function handleMyStats(
     senderName: string,
     message: proto.IWebMessageInfo
 ): Promise<void> {
-    const stats = userRepository.getStats(senderId);
+    const stats = await userRepository.getStats(senderId);
 
     if (!stats) {
         await replyToMessage(jid, '📊 Você ainda não contabilizou cervejas desde o início do bot (12/01/2026). Mande sua próxima gelada! 🍺', message);
         return;
     }
 
-    const rank = userRepository.getRank(senderId);
-    const progress = counterService.getProgress();
+    const rank = await userRepository.getRank(senderId);
+    const progress = await counterService.getProgress();
     const contribution = ((stats.totalCount / progress.current) * 100).toFixed(2);
 
     const elo = getElo(stats.totalCount);
@@ -261,7 +265,7 @@ async function handleElos(jid: string): Promise<void> {
 }
 
 async function handleAudit(jid: string): Promise<void> {
-    const last = countRepository.getLastN(15);
+    const last = await countRepository.getLastN(15);
 
     if (last.length === 0) {
         await sendMessage(jid, '📋 Nenhuma contagem registrada ainda!');
@@ -312,7 +316,7 @@ async function handleSetCount(
         return;
     }
 
-    const current = counterService.getCurrentCount();
+    const current = await counterService.getCurrentCount();
     if (current > 0) {
         await replyToMessage(
             jid,
@@ -322,7 +326,7 @@ async function handleSetCount(
         return;
     }
 
-    const success = counterService.setInitialCount(number, senderId, senderName);
+    const success = await counterService.setInitialCount(number, senderId, senderName);
     if (success) {
         await sendMessage(jid, `✅ Contagem iniciada em *${number}*! O próximo é *${number + 1}*. 🍺`);
     } else {
@@ -348,11 +352,99 @@ async function handleForceCount(
         return;
     }
 
-    const success = counterService.forceCount(number, senderId, senderName);
+    const success = await counterService.forceCount(number, senderId, senderName);
     if (success) {
         await sendMessage(jid, `✅ Contagem forçada para *${number}*! O próximo é *${number + 1}*. 🍺`);
     } else {
         await replyToMessage(jid, '❌ Erro ao forçar contagem.', message);
+    }
+}
+
+/**
+ * Deleta uma cerveja específica por número
+ * O trigger do Supabase ajusta o ranking automaticamente
+ */
+async function handleDeleteCount(
+    jid: string,
+    args: string[],
+    senderId: string,
+    message: proto.IWebMessageInfo
+): Promise<void> {
+    if (!isAdmin(senderId)) {
+        await replyToMessage(jid, '❌ Apenas admins podem usar este comando.', message);
+        return;
+    }
+
+    const number = parseInt(args[0], 10);
+    if (isNaN(number) || number < 1) {
+        await replyToMessage(jid, '❌ Uso: /del <número>\nEx: /del 3950', message);
+        return;
+    }
+
+    const deleted = await countRepository.deleteByNumber(number);
+    if (deleted) {
+        await sendMessage(
+            jid,
+            `✅ Cerveja *#${number}* deletada!\n` +
+            `👤 Era de: ${deleted.userName || 'Anônimo'}\n` +
+            `📊 Ranking atualizado automaticamente.`
+        );
+    } else {
+        await replyToMessage(jid, `❌ Cerveja #${number} não encontrada.`, message);
+    }
+}
+
+/**
+ * Força o total de cervejas de um usuário
+ * Uso: /setuser <ID ou Nome> <total>
+ */
+async function handleSetUser(
+    jid: string,
+    args: string[],
+    senderId: string,
+    message: proto.IWebMessageInfo
+): Promise<void> {
+    if (!isAdmin(senderId)) {
+        await replyToMessage(jid, '❌ Apenas admins podem usar este comando.', message);
+        return;
+    }
+
+    if (args.length < 2) {
+        await replyToMessage(jid, '❌ Uso: /setuser <ID ou Nome> <total>\nEx: /setuser Felpess 100', message);
+        return;
+    }
+
+    const total = parseInt(args[args.length - 1], 10);
+    if (isNaN(total) || total < 0) {
+        await replyToMessage(jid, '❌ O total deve ser um número válido >= 0', message);
+        return;
+    }
+
+    const identifier = args.slice(0, -1).join(' ');
+
+    // Tenta encontrar por ID primeiro
+    let user = await userRepository.getStats(identifier);
+
+    // Se não encontrou, tenta por nome
+    if (!user) {
+        user = await userRepository.findByName(identifier);
+    }
+
+    if (!user) {
+        await replyToMessage(jid, `❌ Usuário "${identifier}" não encontrado.`, message);
+        return;
+    }
+
+    const success = await userRepository.setUserTotal(user.id, total);
+    if (success) {
+        await sendMessage(
+            jid,
+            `✅ Total atualizado!\n` +
+            `👤 Usuário: *${user.name || user.id}*\n` +
+            `🍺 Novo total: *${total}* cervejas`
+        );
+    } else {
+        await replyToMessage(jid, '❌ Erro ao atualizar total do usuário.', message);
     }
 }
 

@@ -14,7 +14,11 @@ data/*.db-journal
 
 # Logs
 logs/
+botlogs/
 *.log
+
+# Scripts (local utilities)
+scripts/
 
 # OS
 .DS_Store
