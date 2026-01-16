@@ -10,8 +10,13 @@ import fs from 'fs';
 import qrcode from 'qrcode-terminal';
 import { config } from '../config/env.js';
 import { logger, baileyLogger } from '../utils/logger.js';
+import {
+    WHATSAPP_RECONNECT_BASE_DELAY_MS,
+    WHATSAPP_RECONNECT_MAX_DELAY_MS,
+} from '../config/constants.js';
 
 let sock: WASocket | null = null;
+let reconnectAttempts = 0;
 
 export type MessageHandler = (message: proto.IWebMessageInfo) => Promise<void>;
 export type DeleteHandler = (messageId: string, jid: string) => Promise<void>;
@@ -25,6 +30,25 @@ export function setMessageHandler(handler: MessageHandler): void {
 
 export function setDeleteHandler(handler: DeleteHandler): void {
     deleteHandler = handler;
+}
+
+/**
+ * Calcula delay de reconexão com backoff exponencial
+ */
+function getReconnectDelay(): number {
+    const delay = Math.min(
+        WHATSAPP_RECONNECT_BASE_DELAY_MS * Math.pow(2, reconnectAttempts),
+        WHATSAPP_RECONNECT_MAX_DELAY_MS
+    );
+    reconnectAttempts++;
+    return delay;
+}
+
+/**
+ * Reseta contador de reconexão após conexão bem-sucedida
+ */
+function resetReconnectAttempts(): void {
+    reconnectAttempts = 0;
 }
 
 export async function connectWhatsApp(): Promise<WASocket> {
@@ -49,6 +73,7 @@ export async function connectWhatsApp(): Promise<WASocket> {
         const { connection, lastDisconnect, qr } = update;
 
         if (qr) {
+            logger.info({ event: 'qr_code_generated' });
             console.log('\n📱 Escaneie o QR Code abaixo para conectar:\n');
             qrcode.generate(qr, { small: true });
         }
@@ -57,28 +82,38 @@ export async function connectWhatsApp(): Promise<WASocket> {
             const reason = (lastDisconnect?.error as Boom)?.output?.statusCode;
 
             if (reason === DisconnectReason.loggedOut) {
-                logger.error('Desconectado! Deletando credenciais...');
+                logger.error({ event: 'whatsapp_logged_out' });
                 fs.rmSync(config.paths.auth, { recursive: true, force: true });
                 process.exit(1);
             } else {
-                logger.warn('Conexão fechada, reconectando...');
-                connectWhatsApp();
+                const delay = getReconnectDelay();
+                logger.warn({
+                    event: 'whatsapp_disconnected',
+                    reason,
+                    reconnectAttempt: reconnectAttempts,
+                    delayMs: delay,
+                });
+                setTimeout(() => {
+                    connectWhatsApp();
+                }, delay);
             }
         } else if (connection === 'open') {
-            logger.info('🍺 Bot conectado com sucesso!');
+            resetReconnectAttempts();
+            logger.info({ event: 'whatsapp_connected' });
         }
     });
 
     // Handler de mensagens
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
-        console.log(`📨 Evento recebido - tipo: ${type}, qtd: ${messages.length}`);
+        logger.debug({ event: 'messages_upsert', type, count: messages.length });
 
         if (type !== 'notify') return;
 
         for (const message of messages) {
-            const jid = message.key?.remoteJid || 'desconhecido';
+            const jid = message.key?.remoteJid || 'unknown';
             const fromMe = message.key?.fromMe;
-            console.log(`📩 Mensagem de: ${jid} | fromMe: ${fromMe}`);
+
+            logger.debug({ event: 'message_received', jid, fromMe });
 
             // Ignora mensagens de si mesmo
             if (message.key.fromMe) continue;
@@ -88,7 +123,10 @@ export async function connectWhatsApp(): Promise<WASocket> {
                 try {
                     await messageHandler(message);
                 } catch (error) {
-                    logger.error({ error }, 'Erro ao processar mensagem');
+                    logger.error({
+                        event: 'message_handler_error',
+                        error: error instanceof Error ? error.message : String(error),
+                    });
                 }
             }
         }
@@ -100,11 +138,19 @@ export async function connectWhatsApp(): Promise<WASocket> {
             // Verifica se foi deletada
             if (update.update?.messageStubType === 1) { // 1 = REVOKE
                 const messageId = update.key?.id;
+                const jid = update.key?.remoteJid || '';
+
+                logger.info({ event: 'message_deleted', messageId, jid });
+
                 if (messageId && deleteHandler) {
                     try {
-                        await deleteHandler(messageId, update.key?.remoteJid || '');
+                        await deleteHandler(messageId, jid);
                     } catch (error) {
-                        logger.error({ error }, 'Erro ao processar deleção');
+                        logger.error({
+                            event: 'delete_handler_error',
+                            messageId,
+                            error: error instanceof Error ? error.message : String(error),
+                        });
                     }
                 }
             }
@@ -123,6 +169,7 @@ export function getSocket(): WASocket | null {
  */
 export async function sendMessage(jid: string, text: string): Promise<void> {
     if (!sock) throw new Error('Socket não conectado');
+    logger.debug({ event: 'message_sent', jid, textLength: text.length });
     await sock.sendMessage(jid, { text });
 }
 
@@ -135,6 +182,7 @@ export async function replyToMessage(
     quotedMessage: proto.IWebMessageInfo
 ): Promise<void> {
     if (!sock) throw new Error('Socket não conectado');
+    logger.debug({ event: 'reply_sent', jid, textLength: text.length });
     await sock.sendMessage(jid, { text }, { quoted: quotedMessage as any });
 }
 
@@ -147,6 +195,7 @@ export async function reactToMessage(
     emoji: string
 ): Promise<void> {
     if (!sock) throw new Error('Socket não conectado');
+    logger.debug({ event: 'reaction_sent', jid, emoji });
     await sock.sendMessage(jid, {
         react: {
             text: emoji,

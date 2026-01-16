@@ -1,6 +1,7 @@
 import { countRepository } from '../database/repositories/count.repo.js';
 import { validateSequence, ValidationResult } from './validator.js';
 import { logger } from '../utils/logger.js';
+import { GOAL, COUNT_CACHE_TTL_MS } from '../config/constants.js';
 
 export interface CountAttempt {
     number: number;
@@ -16,15 +17,38 @@ export interface CountResponse {
     currentCount: number;
 }
 
+// Cache simples para getCurrentCount
+let cachedCount: number | null = null;
+let cacheTimestamp: number = 0;
+
 /**
  * Serviço central de contagem de cervejas
  */
 export const counterService = {
     /**
-     * Retorna a contagem atual
+     * Retorna a contagem atual (com cache)
      */
     async getCurrentCount(): Promise<number> {
-        return countRepository.getLastCount();
+        const now = Date.now();
+
+        // Retorna cache se ainda válido
+        if (cachedCount !== null && (now - cacheTimestamp) < COUNT_CACHE_TTL_MS) {
+            return cachedCount;
+        }
+
+        // Busca do banco e atualiza cache
+        cachedCount = await countRepository.getLastCount();
+        cacheTimestamp = now;
+
+        return cachedCount;
+    },
+
+    /**
+     * Invalida o cache (chamado após alterações)
+     */
+    invalidateCache(): void {
+        cachedCount = null;
+        cacheTimestamp = 0;
     },
 
     /**
@@ -52,7 +76,8 @@ export const counterService = {
         });
 
         if (!record) {
-            // Provavelmente alguém foi mais rápido
+            // Provavelmente alguém foi mais rápido - invalida cache
+            this.invalidateCache();
             const newCurrentCount = await this.getCurrentCount();
             return {
                 success: false,
@@ -65,6 +90,9 @@ export const counterService = {
                 currentCount: newCurrentCount,
             };
         }
+
+        // Invalida cache após sucesso
+        this.invalidateCache();
 
         logger.info({
             event: 'count_added',
@@ -86,6 +114,7 @@ export const counterService = {
     async setInitialCount(number: number, userId: string, userName?: string): Promise<boolean> {
         const success = await countRepository.setInitialCount(number, userId, userName);
         if (success) {
+            this.invalidateCache();
             logger.info({ event: 'initial_count_set', number, userId });
         }
         return success;
@@ -95,7 +124,11 @@ export const counterService = {
      * Força uma contagem (admin)
      */
     async forceCount(number: number, userId: string, userName?: string): Promise<boolean> {
-        return countRepository.forceCount(number, userId, userName);
+        const success = await countRepository.forceCount(number, userId, userName);
+        if (success) {
+            this.invalidateCache();
+        }
+        return success;
     },
 
     /**
@@ -103,9 +136,8 @@ export const counterService = {
      */
     async getProgress(): Promise<{ current: number; goal: number; percentage: number }> {
         const current = await this.getCurrentCount();
-        const goal = 1_000_000;
-        const percentage = Math.round((current / goal) * 10000) / 100;
+        const percentage = Math.round((current / GOAL) * 10000) / 100;
 
-        return { current, goal, percentage };
+        return { current, goal: GOAL, percentage };
     },
 };

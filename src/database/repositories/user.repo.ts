@@ -1,10 +1,27 @@
 import { getSupabase } from '../supabase.js';
+import { logger } from '../../utils/logger.js';
+import { withRetry } from '../../utils/retry.js';
 
 export interface UserStats {
     id: string;
     name: string | null;
     totalCount: number;
     lastCountAt: string | null;
+}
+
+// Interface para row do Supabase
+interface UserRow {
+    id: string;
+    name: string | null;
+    total_count: number;
+    last_count_at: string | null;
+}
+
+/**
+ * Escapa caracteres especiais de LIKE/ILIKE para evitar injection
+ */
+function escapeLikePattern(input: string): string {
+    return input.replace(/[%_\\]/g, '\\$&');
 }
 
 export const userRepository = {
@@ -19,8 +36,14 @@ export const userRepository = {
             .eq('id', userId)
             .single();
 
-        if (error || !data) return null;
-        return this.mapRow(data);
+        if (error) {
+            if (error.code !== 'PGRST116') { // Not found is ok
+                logger.error({ event: 'user_get_stats_error', userId, error: error.message });
+            }
+            return null;
+        }
+        if (!data) return null;
+        return this.mapRow(data as UserRow);
     },
 
     /**
@@ -34,8 +57,12 @@ export const userRepository = {
             .order('total_count', { ascending: false })
             .limit(n);
 
-        if (error || !data) return [];
-        return data.map(this.mapRow);
+        if (error) {
+            logger.error({ event: 'user_get_top_error', n, error: error.message });
+            return [];
+        }
+        if (!data) return [];
+        return data.map((row) => this.mapRow(row as UserRow));
     },
 
     /**
@@ -45,19 +72,29 @@ export const userRepository = {
         const supabase = getSupabase();
 
         // Primeiro pega o total do usuário
-        const { data: userRow } = await supabase
+        const { data: userRow, error: userError } = await supabase
             .from('users')
             .select('total_count')
             .eq('id', userId)
             .single();
 
-        if (!userRow) return 0;
+        if (userError || !userRow) {
+            if (userError && userError.code !== 'PGRST116') {
+                logger.error({ event: 'user_get_rank_error', userId, error: userError.message });
+            }
+            return 0;
+        }
 
         // Conta quantos têm mais cervejas
-        const { count } = await supabase
+        const { count, error: countError } = await supabase
             .from('users')
             .select('*', { count: 'exact', head: true })
             .gt('total_count', userRow.total_count);
+
+        if (countError) {
+            logger.error({ event: 'user_rank_count_error', userId, error: countError.message });
+            return 0;
+        }
 
         return (count || 0) + 1;
     },
@@ -67,27 +104,41 @@ export const userRepository = {
      */
     async getTotalParticipants(): Promise<number> {
         const supabase = getSupabase();
-        const { count } = await supabase
+        const { count, error } = await supabase
             .from('users')
             .select('*', { count: 'exact', head: true });
+
+        if (error) {
+            logger.error({ event: 'user_total_participants_error', error: error.message });
+            return 0;
+        }
 
         return count || 0;
     },
 
     /**
      * Busca usuário por nome (parcial, case insensitive)
+     * Input é sanitizado para evitar LIKE injection
      */
     async findByName(name: string): Promise<UserStats | null> {
         const supabase = getSupabase();
-        const { data } = await supabase
+        const escapedName = escapeLikePattern(name);
+
+        const { data, error } = await supabase
             .from('users')
             .select('*')
-            .ilike('name', `%${name}%`)
+            .ilike('name', `%${escapedName}%`)
             .limit(1)
             .single();
 
+        if (error) {
+            if (error.code !== 'PGRST116') {
+                logger.error({ event: 'user_find_by_name_error', name, error: error.message });
+            }
+            return null;
+        }
         if (!data) return null;
-        return this.mapRow(data);
+        return this.mapRow(data as UserRow);
     },
 
     /**
@@ -100,23 +151,130 @@ export const userRepository = {
             .update({ total_count: total })
             .eq('id', userId);
 
-        return !error;
+        if (error) {
+            logger.error({ event: 'user_set_total_error', userId, total, error: error.message });
+            return false;
+        }
+
+        logger.info({ event: 'user_total_set', userId, total });
+        return true;
     },
 
     /**
-     * Recalcula estatísticas de todos os usuários
-     * Chama a função SQL recalculate_all_users()
+     * Incrementa contagem do usuário (ou cria se não existir)
+     * Retorna true se operação foi bem-sucedida
+     */
+    async incrementUserCount(userId: string, userName: string): Promise<boolean> {
+        const supabase = getSupabase();
+
+        // Verifica se usuário existe
+        const { data: user, error: selectError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', userId)
+            .single();
+
+        if (selectError && selectError.code !== 'PGRST116') {
+            logger.error({ event: 'user_increment_select_error', userId, error: selectError.message });
+            return false;
+        }
+
+        const now = new Date().toISOString();
+
+        if (user) {
+            const { error: updateError } = await supabase
+                .from('users')
+                .update({
+                    total_count: ((user as UserRow).total_count || 0) + 1,
+                    last_count_at: now,
+                    name: userName || (user as UserRow).name // Atualiza nome se fornecido
+                })
+                .eq('id', userId);
+
+            if (updateError) {
+                logger.error({ event: 'user_increment_update_error', userId, error: updateError.message });
+                return false;
+            }
+        } else {
+            const { error: insertError } = await supabase
+                .from('users')
+                .insert({
+                    id: userId,
+                    name: userName || 'Anônimo',
+                    total_count: 1,
+                    last_count_at: now
+                });
+
+            if (insertError) {
+                logger.error({ event: 'user_increment_insert_error', userId, error: insertError.message });
+                return false;
+            }
+        }
+
+        return true;
+    },
+
+    /**
+     * Decrementa contagem do usuário
+     * Retorna true se operação foi bem-sucedida
+     */
+    async decrementUserCount(userId: string): Promise<boolean> {
+        const supabase = getSupabase();
+
+        const { data: user, error: selectError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', userId)
+            .single();
+
+        if (selectError) {
+            if (selectError.code !== 'PGRST116') {
+                logger.error({ event: 'user_decrement_select_error', userId, error: selectError.message });
+            }
+            return false;
+        }
+
+        const userRow = user as UserRow;
+        if (userRow && userRow.total_count > 0) {
+            const { error: updateError } = await supabase
+                .from('users')
+                .update({
+                    total_count: userRow.total_count - 1
+                })
+                .eq('id', userId);
+
+            if (updateError) {
+                logger.error({ event: 'user_decrement_update_error', userId, error: updateError.message });
+                return false;
+            }
+        }
+
+        return true;
+    },
+
+    /**
+     * Recalcula estatísticas de todos os usuários usando UPSERT
+     * Evita DELETE+INSERT que poderia causar perda de dados
      */
     async recalculateAll(): Promise<number> {
         const supabase = getSupabase();
 
-        // Executa recálculo via SQL direto
-        // Como não temos a função ainda, fazemos manualmente
-        const { data: counts } = await supabase
+        logger.info({ event: 'recalculate_all_start' });
+
+        // Busca todas as contagens
+        const { data: counts, error: fetchError } = await supabase
             .from('counts')
             .select('user_id, user_name, created_at');
 
-        if (!counts || counts.length === 0) return 0;
+        if (fetchError) {
+            logger.error({ event: 'recalculate_all_fetch_error', error: fetchError.message });
+            throw new Error(`Erro ao buscar contagens: ${fetchError.message}`);
+        }
+
+        if (!counts || counts.length === 0) {
+            logger.info({ event: 'recalculate_all_no_counts' });
+            return 0;
+        }
 
         // Agrupa por usuário
         const userMap = new Map<string, { name: string; count: number; lastAt: string }>();
@@ -137,25 +295,86 @@ export const userRepository = {
             }
         }
 
-        // Limpa tabela users
-        await supabase.from('users').delete().neq('id', '');
-
-        // Reinsere
-        const usersToInsert = Array.from(userMap.entries()).map(([id, data]) => ({
+        // Usa UPSERT para atualizar/inserir usuários de forma atômica
+        const usersToUpsert = Array.from(userMap.entries()).map(([id, data]) => ({
             id,
             name: data.name,
             total_count: data.count,
             last_count_at: data.lastAt,
         }));
 
-        if (usersToInsert.length > 0) {
-            await supabase.from('users').insert(usersToInsert);
+        if (usersToUpsert.length > 0) {
+            // Processa em batches de 100 para evitar timeout
+            const batchSize = 100;
+            for (let i = 0; i < usersToUpsert.length; i += batchSize) {
+                const batch = usersToUpsert.slice(i, i + batchSize);
+
+                const { error: upsertError } = await supabase
+                    .from('users')
+                    .upsert(batch, {
+                        onConflict: 'id',
+                        ignoreDuplicates: false
+                    });
+
+                if (upsertError) {
+                    logger.error({
+                        event: 'recalculate_all_upsert_error',
+                        batch: i / batchSize + 1,
+                        error: upsertError.message
+                    });
+                    throw new Error(`Erro ao atualizar usuários: ${upsertError.message}`);
+                }
+            }
         }
 
-        return usersToInsert.length;
+        // Remove usuários que não têm mais contagens (limpeza)
+        const validUserIds = Array.from(userMap.keys());
+        if (validUserIds.length > 0) {
+            const { error: cleanupError } = await supabase
+                .from('users')
+                .delete()
+                .not('id', 'in', `(${validUserIds.map(id => `'${id}'`).join(',')})`);
+
+            if (cleanupError) {
+                logger.warn({ event: 'recalculate_all_cleanup_warning', error: cleanupError.message });
+                // Não falha a operação se cleanup falhar
+            }
+        }
+
+        logger.info({ event: 'recalculate_all_complete', usersUpdated: usersToUpsert.length });
+        return usersToUpsert.length;
     },
 
-    mapRow(row: any): UserStats {
+    /**
+     * Busca múltiplos usuários por IDs (batch)
+     */
+    async getStatsBatch(userIds: string[]): Promise<Map<string, UserStats>> {
+        const supabase = getSupabase();
+        const result = new Map<string, UserStats>();
+
+        if (userIds.length === 0) return result;
+
+        const { data, error } = await supabase
+            .from('users')
+            .select('*')
+            .in('id', userIds);
+
+        if (error) {
+            logger.error({ event: 'user_get_stats_batch_error', error: error.message });
+            return result;
+        }
+
+        if (data) {
+            for (const row of data) {
+                const stats = this.mapRow(row as UserRow);
+                result.set(stats.id, stats);
+            }
+        }
+
+        return result;
+    },
+
+    mapRow(row: UserRow): UserStats {
         return {
             id: row.id,
             name: row.name,

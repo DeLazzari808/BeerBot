@@ -5,8 +5,11 @@ import { counterService } from '../core/counter.js';
 import { getElo } from '../core/elo.js';
 import { sendMessage } from '../services/whatsapp.js';
 import { logger } from '../utils/logger.js';
+import { DAILY_RECAP_HOUR, DAILY_RECAP_MINUTE } from '../config/constants.js';
+import { maybeGetDonateHint } from '../config/donate.js';
 
 let recapInterval: NodeJS.Timeout | null = null;
+let lastRecapDate: string | null = null; // Evita recaps duplicados
 
 /**
  * Inicia o scheduler do recap diário
@@ -17,14 +20,16 @@ export function startDailyRecapScheduler(): void {
         const now = new Date();
         const hours = now.getHours();
         const minutes = now.getMinutes();
+        const today = now.toISOString().split('T')[0];
 
-        // 23:45
-        if (hours === 23 && minutes === 45) {
+        // Evita executar múltiplas vezes no mesmo dia
+        if (hours === DAILY_RECAP_HOUR && minutes === DAILY_RECAP_MINUTE && lastRecapDate !== today) {
+            lastRecapDate = today;
             sendDailyRecap();
         }
     }, 60 * 1000); // Checa a cada minuto
 
-    logger.info('📅 Scheduler de recap diário iniciado (23:45)');
+    logger.info({ event: 'scheduler_started', hour: DAILY_RECAP_HOUR, minute: DAILY_RECAP_MINUTE });
 }
 
 /**
@@ -34,6 +39,7 @@ export function stopDailyRecapScheduler(): void {
     if (recapInterval) {
         clearInterval(recapInterval);
         recapInterval = null;
+        logger.info({ event: 'scheduler_stopped' });
     }
 }
 
@@ -177,9 +183,11 @@ function generateFunFact(stats: { total: number }, progress: { goal: number; cur
  */
 export async function sendDailyRecap(): Promise<void> {
     if (!config.groupId) {
-        logger.warn('GROUP_ID não configurado, pulando recap');
+        logger.warn({ event: 'recap_skipped', reason: 'no_group_id' });
         return;
     }
+
+    logger.info({ event: 'recap_start' });
 
     const today = new Date().toISOString().split('T')[0];
     const dayOfWeek = new Date().getDay();
@@ -191,6 +199,7 @@ export async function sendDailyRecap(): Promise<void> {
             config.groupId,
             `📊 *RECAP DO DIA* 📊\n\n${phrase}\n\nAmanhã a gente recupera! 🍺`
         );
+        logger.info({ event: 'recap_sent', total: 0 });
         return;
     }
 
@@ -203,15 +212,20 @@ export async function sendDailyRecap(): Promise<void> {
 
     // MVP
     const mvp = topContributors[0];
-    const mvpStats = mvp ? await userRepository.getStats(mvp.userId) : null;
+
+    // Busca stats de todos os contributors em batch
+    const contributorIds = topContributors.map(c => c.userId);
+    const contributorStats = await userRepository.getStatsBatch(contributorIds);
+
+    const mvpStats = mvp ? contributorStats.get(mvp.userId) : null;
     const mvpElo = mvpStats ? getElo(mvpStats.totalCount) : (mvp ? getElo(mvp.count) : null);
 
-    // Top 5 formatado
+    // Top 5 formatado (usando batch stats)
     const topLines: string[] = [];
     for (let i = 0; i < topContributors.length; i++) {
         const c = topContributors[i];
         const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
-        const userStats = await userRepository.getStats(c.userId);
+        const userStats = contributorStats.get(c.userId);
         const eloInfo = userStats ? getElo(userStats.totalCount) : getElo(c.count);
         const percentage = ((c.count / stats.total) * 100).toFixed(0);
         topLines.push(`${medals[i]} *${c.userName}* — ${c.count} (${percentage}%) ${eloInfo.emoji}`);
@@ -252,8 +266,9 @@ export async function sendDailyRecap(): Promise<void> {
         `⏳ Faltam: *${remaining.toLocaleString('pt-BR')}*\n\n` +
         `💡 ${funFact1}\n` +
         `💡 ${funFact2}\n\n` +
-        `${closing}`;
+        `${closing}` +
+        maybeGetDonateHint();
 
     await sendMessage(config.groupId, message);
-    logger.info({ event: 'daily_recap_sent', total: stats.total });
+    logger.info({ event: 'recap_sent', total: stats.total, contributors: uniqueUsers });
 }

@@ -7,31 +7,35 @@ import { startDailyRecapScheduler, stopDailyRecapScheduler } from './services/sc
 import { counterService } from './core/counter.js';
 import { logger } from './utils/logger.js';
 
+let isShuttingDown = false;
+
 async function main(): Promise<void> {
-    logger.info('🍺 Iniciando BeerBot...');
+    logger.info({ event: 'bot_starting' });
 
     // Verifica se Supabase está configurado
     if (!isSupabaseConfigured()) {
-        logger.error('❌ Supabase não configurado! Configure SUPABASE_URL e SUPABASE_KEY no .env');
+        logger.error({ event: 'supabase_not_configured' });
+        console.error('❌ Supabase não configurado! Configure SUPABASE_URL e SUPABASE_KEY no .env');
         process.exit(1);
     }
 
     // Testa conexão com Supabase
     const connected = await testSupabaseConnection();
     if (!connected) {
-        logger.error('❌ Não foi possível conectar ao Supabase!');
+        logger.error({ event: 'supabase_connection_failed' });
+        console.error('❌ Não foi possível conectar ao Supabase!');
         process.exit(1);
     }
-    logger.info('✅ Conectado ao Supabase');
+    logger.info({ event: 'supabase_connected' });
 
     // Verifica se precisa definir contagem inicial
     const currentCount = await counterService.getCurrentCount();
     if (currentCount === 0 && config.initialCount > 0) {
         await counterService.setInitialCount(config.initialCount, 'system', 'Sistema');
-        logger.info(`📊 Contagem inicial definida: ${config.initialCount}`);
+        logger.info({ event: 'initial_count_set', count: config.initialCount });
     }
 
-    logger.info(`📊 Contagem atual: ${await counterService.getCurrentCount()}`);
+    logger.info({ event: 'current_count', count: await counterService.getCurrentCount() });
 
     // Registra handlers
     setMessageHandler(handleMessage);
@@ -43,20 +47,46 @@ async function main(): Promise<void> {
     // Inicia scheduler do recap diário (23:45)
     startDailyRecapScheduler();
 
-    logger.info('✅ Bot inicializado! Aguardando mensagens...');
+    logger.info({ event: 'bot_ready' });
+    console.log('✅ Bot inicializado! Aguardando mensagens...');
 
     // Graceful shutdown
-    const shutdown = () => {
-        logger.info('👋 Encerrando bot...');
+    const shutdown = async (signal: string) => {
+        if (isShuttingDown) {
+            logger.warn({ event: 'shutdown_already_in_progress' });
+            return;
+        }
+
+        isShuttingDown = true;
+        logger.info({ event: 'shutdown_started', signal });
+        console.log(`\n👋 Recebido ${signal}. Encerrando bot...`);
+
+        // Para o scheduler
         stopDailyRecapScheduler();
+
+        // Aguarda um pouco para operações pendentes terminarem
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        logger.info({ event: 'shutdown_complete' });
         process.exit(0);
     };
 
-    process.on('SIGINT', shutdown);
-    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', () => shutdown('SIGINT'));
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+    // Handler para erros não tratados
+    process.on('uncaughtException', (error) => {
+        logger.error({ event: 'uncaught_exception', error: error.message, stack: error.stack });
+        shutdown('uncaughtException');
+    });
+
+    process.on('unhandledRejection', (reason) => {
+        logger.error({ event: 'unhandled_rejection', reason: String(reason) });
+    });
 }
 
 main().catch((error) => {
-    logger.error({ error }, 'Erro fatal');
+    logger.error({ event: 'fatal_error', error: error.message, stack: error.stack });
+    console.error('Erro fatal:', error);
     process.exit(1);
 });
