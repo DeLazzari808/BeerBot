@@ -13,6 +13,11 @@ export interface CountRecord {
     createdAt: string;
 }
 
+export interface AddCountResult {
+    record: CountRecord;
+    userTotal: number;
+}
+
 export interface CountInput {
     number: number;
     userId: string;
@@ -37,7 +42,7 @@ export const countRepository = {
      * Adiciona uma nova contagem
      * Atualiza tabela users manualmente (sem trigger)
      */
-    async add(input: CountInput): Promise<CountRecord | null> {
+    async add(input: CountInput): Promise<AddCountResult | null> {
         const supabase = getSupabase();
 
         const { data, error } = await supabase
@@ -58,14 +63,17 @@ export const countRepository = {
             return null;
         }
 
-        // Atualiza ranking
-        const userUpdated = await userRepository.incrementUserCount(input.userId, input.userName || 'Anônimo');
-        if (!userUpdated) {
+        // Atualiza ranking e recebe o novo total
+        const userTotal = await userRepository.incrementUserCount(input.userId, input.userName || 'Anônimo');
+        if (userTotal === null) {
             logger.warn({ event: 'count_add_user_update_failed', userId: input.userId });
         }
 
-        logger.info({ event: 'count_added', number: input.number, userId: input.userId });
-        return this.mapRow(data as CountRow);
+        logger.info({ event: 'count_added', number: input.number, userId: input.userId, userTotal });
+        return {
+            record: this.mapRow(data as CountRow),
+            userTotal: userTotal || 1,
+        };
     },
 
     /**
@@ -359,7 +367,7 @@ export const countRepository = {
         }
 
         const userUpdated = await userRepository.incrementUserCount(userId, userName || 'Sistema');
-        if (!userUpdated) {
+        if (userUpdated === null) {
             logger.warn({ event: 'count_set_initial_user_update_failed', userId });
         }
 

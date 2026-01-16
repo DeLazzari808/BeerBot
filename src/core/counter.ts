@@ -15,6 +15,7 @@ export interface CountResponse {
     success: boolean;
     validation: ValidationResult;
     currentCount: number;
+    userTotal?: number; // Total de cervejas do usuário após esta contagem
 }
 
 // Cache simples para getCurrentCount
@@ -67,7 +68,7 @@ export const counterService = {
         }
 
         // Tenta inserir no banco
-        const record = await countRepository.add({
+        const result = await countRepository.add({
             number: attempt.number,
             userId: attempt.userId,
             userName: attempt.userName,
@@ -75,7 +76,7 @@ export const counterService = {
             hasImage: attempt.hasImage,
         });
 
-        if (!record) {
+        if (!result) {
             // Provavelmente alguém foi mais rápido - invalida cache
             this.invalidateCache();
             const newCurrentCount = await this.getCurrentCount();
@@ -99,12 +100,14 @@ export const counterService = {
             number: attempt.number,
             userId: attempt.userId,
             userName: attempt.userName,
+            userTotal: result.userTotal,
         });
 
         return {
             success: true,
             validation,
             currentCount: attempt.number,
+            userTotal: result.userTotal,
         };
     },
 

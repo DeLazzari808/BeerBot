@@ -2,7 +2,6 @@ import { proto } from '@whiskeysockets/baileys';
 import { config } from '../config/env.js';
 import { parseCountFromMessage } from '../core/parser.js';
 import { counterService } from '../core/counter.js';
-import { userRepository } from '../database/repositories/user.repo.js';
 import { reactToMessage, replyToMessage } from '../services/whatsapp.js';
 import { logger } from '../utils/logger.js';
 import { handleCommand } from './command.handler.js';
@@ -128,8 +127,7 @@ export async function handleMessage(message: proto.IWebMessageInfo): Promise<voi
                 });
 
                 if (result.success) {
-                    const userStats = await userRepository.getStats(senderId);
-                    const totalBeers = userStats?.totalCount || 1;
+                    const totalBeers = result.userTotal || 1;
 
                     // Reage e responde
                     await reactToMessage(jid, message.key!, '🍺');
@@ -145,6 +143,7 @@ export async function handleMessage(message: proto.IWebMessageInfo): Promise<voi
                         number: nextNumber,
                         sender: senderName,
                         senderId,
+                        totalBeers,
                     });
                 } else {
                     // Falhou - informa o erro
@@ -203,8 +202,7 @@ export async function handleMessage(message: proto.IWebMessageInfo): Promise<voi
             });
 
             if (result.success) {
-                const userStats = await userRepository.getStats(senderId);
-                const totalBeers = userStats?.totalCount || 1;
+                const totalBeers = result.userTotal || 1;
 
                 await reactToMessage(jid, message.key!, '⚠️');
                 await replyToMessage(
@@ -220,6 +218,7 @@ export async function handleMessage(message: proto.IWebMessageInfo): Promise<voi
                     correctedTo: nextNumber,
                     sender: senderName,
                     senderId,
+                    totalBeers,
                 });
             } else {
                 // Falhou ao corrigir

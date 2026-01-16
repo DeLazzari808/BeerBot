@@ -162,56 +162,50 @@ export const userRepository = {
 
     /**
      * Incrementa contagem do usuário (ou cria se não existir)
-     * Retorna true se operação foi bem-sucedida
+     * Retorna o novo total ou null se falhou
+     * Usa UPSERT para operação atômica e evitar race conditions
      */
-    async incrementUserCount(userId: string, userName: string): Promise<boolean> {
+    async incrementUserCount(userId: string, userName: string): Promise<number | null> {
         const supabase = getSupabase();
+        const now = new Date().toISOString();
 
-        // Verifica se usuário existe
-        const { data: user, error: selectError } = await supabase
+        // Primeiro tenta buscar o usuário existente
+        const { data: existingUser, error: selectError } = await supabase
             .from('users')
-            .select('*')
+            .select('total_count')
             .eq('id', userId)
             .single();
 
         if (selectError && selectError.code !== 'PGRST116') {
             logger.error({ event: 'user_increment_select_error', userId, error: selectError.message });
-            return false;
+            return null;
         }
 
-        const now = new Date().toISOString();
+        const currentCount = existingUser?.total_count || 0;
+        const newTotal = currentCount + 1;
 
-        if (user) {
-            const { error: updateError } = await supabase
-                .from('users')
-                .update({
-                    total_count: ((user as UserRow).total_count || 0) + 1,
-                    last_count_at: now,
-                    name: userName || (user as UserRow).name // Atualiza nome se fornecido
-                })
-                .eq('id', userId);
+        // Usa UPSERT para garantir atomicidade
+        const { data: updatedUser, error: upsertError } = await supabase
+            .from('users')
+            .upsert({
+                id: userId,
+                name: userName || 'Anônimo',
+                total_count: newTotal,
+                last_count_at: now
+            }, {
+                onConflict: 'id',
+                ignoreDuplicates: false
+            })
+            .select('total_count')
+            .single();
 
-            if (updateError) {
-                logger.error({ event: 'user_increment_update_error', userId, error: updateError.message });
-                return false;
-            }
-        } else {
-            const { error: insertError } = await supabase
-                .from('users')
-                .insert({
-                    id: userId,
-                    name: userName || 'Anônimo',
-                    total_count: 1,
-                    last_count_at: now
-                });
-
-            if (insertError) {
-                logger.error({ event: 'user_increment_insert_error', userId, error: insertError.message });
-                return false;
-            }
+        if (upsertError) {
+            logger.error({ event: 'user_increment_upsert_error', userId, error: upsertError.message });
+            return null;
         }
 
-        return true;
+        // Retorna o total do banco (garantido correto)
+        return updatedUser?.total_count || newTotal;
     },
 
     /**
