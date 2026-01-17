@@ -1,7 +1,7 @@
 import { proto } from '@whiskeysockets/baileys';
 import { config } from '../config/env.js';
 import { counterService } from '../core/counter.js';
-import { getElo, getNextElo, beersToNextElo, ELOS } from '../core/elo.js';
+import { getElo, ELOS } from '../core/elo.js';
 import { countRepository } from '../database/repositories/count.repo.js';
 import { userRepository } from '../database/repositories/user.repo.js';
 import { sendMessage, replyToMessage } from '../services/whatsapp.js';
@@ -97,7 +97,7 @@ function checkRateLimit(userId: string): { allowed: boolean; waitTime?: number }
 }
 
 // Lista de comandos públicos para rate limiting
-const PUBLIC_COMMANDS = ['status', 's', 'rank', 'ranking', 'top', 'meu', 'stats', 'elo', 'elos', 'help', 'ajuda', 'comandos', 'hoje', 'semana', 'week', 'donate', 'pix', 'doar'];
+const PUBLIC_COMMANDS = ['status', 's', 'rank', 'ranking', 'top', 'elo', 'elos', 'help', 'ajuda', 'comandos', 'hoje', 'semana', 'week', 'donate', 'pix', 'doar'];
 
 // Lista de comandos válidos para detectar comandos desconhecidos
 const VALID_COMMANDS = [...PUBLIC_COMMANDS, 'audit', 'auditoria', 'setcount', 'iniciar', 'fix', 'forcar', 'recap', 'recalc', 'sync', 'del', 'deletar', 'setuser'];
@@ -168,10 +168,6 @@ export async function handleCommand(
                 await handleRanking(jid);
                 break;
 
-            case 'meu':
-            case 'stats':
-                await handleMyStats(jid, senderId, senderName, message);
-                break;
 
             case 'elo':
             case 'elos':
@@ -323,49 +319,6 @@ async function handleRanking(jid: string): Promise<void> {
     await sendMessage(jid, text);
 }
 
-async function handleMyStats(
-    jid: string,
-    senderId: string,
-    senderName: string,
-    message: proto.IWebMessageInfo
-): Promise<void> {
-    const stats = await userRepository.getStats(senderId);
-
-    if (!stats) {
-        await replyToMessage(jid, '📊 Você ainda não contabilizou cervejas. Mande sua próxima gelada! 🍺', message);
-        return;
-    }
-
-    // Paraleliza queries independentes para melhor performance
-    const [rank, progress] = await Promise.all([
-        userRepository.getRank(senderId),
-        counterService.getProgress(),
-    ]);
-
-    // Fix: evita divisão por zero
-    const contribution = progress.current > 0
-        ? ((stats.totalCount / progress.current) * 100).toFixed(2)
-        : '0.00';
-
-    const elo = getElo(stats.totalCount);
-    const nextElo = getNextElo(stats.totalCount);
-    const toNextElo = beersToNextElo(stats.totalCount);
-
-    let eloText = `${elo.emoji} *${elo.name}*`;
-    if (nextElo && toNextElo > 0) {
-        eloText += `\n📈 Próximo: ${nextElo.emoji} ${nextElo.name} (faltam ${toNextElo})`;
-    }
-
-    const text =
-        `📊 *SUAS ESTATÍSTICAS* 📊\n\n` +
-        `🍺 Total: *${stats.totalCount}* cervejas\n` +
-        `🏆 Ranking: *#${rank}*\n` +
-        `📈 Contribuição: *${contribution}%*\n\n` +
-        `🎖️ Elo: ${eloText}`;
-
-    await replyToMessage(jid, text, message);
-}
-
 async function handleElos(jid: string): Promise<void> {
     const lines = ELOS.map(elo => {
         const range = elo.maxCount === Infinity
@@ -475,7 +428,6 @@ async function handleHelp(jid: string, isUserAdmin: boolean): Promise<void> {
         `🍺 *COMANDOS DO BOT* 🍺\n\n` +
         `*/status* (ou */s*) — Ver contagem atual\n` +
         `*/rank* — Top 10 bebedores\n` +
-        `*/meu* — Suas estatísticas\n` +
         `*/elo* — Ver sistema de elos\n` +
         `*/hoje* — Estatísticas de hoje\n` +
         `*/semana* — Estatísticas da semana\n` +

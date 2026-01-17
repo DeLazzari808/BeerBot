@@ -296,19 +296,8 @@ export const userRepository = {
             }
         }
 
-        // Remove usuários que não têm mais contagens (limpeza)
-        const validUserIds = Array.from(userMap.keys());
-        if (validUserIds.length > 0) {
-            const { error: cleanupError } = await supabase
-                .from('users')
-                .delete()
-                .not('id', 'in', `(${validUserIds.map(id => `'${id}'`).join(',')})`);
-
-            if (cleanupError) {
-                logger.warn({ event: 'recalculate_all_cleanup_warning', error: cleanupError.message });
-                // Não falha a operação se cleanup falhar
-            }
-        }
+        // Nota: Não fazemos cleanup de usuários órfãos aqui para evitar perda de dados
+        // Se necessário, cleanup deve ser feito manualmente por admin
 
         logger.info({ event: 'recalculate_all_complete', usersUpdated: usersToUpsert.length });
         return usersToUpsert.length;

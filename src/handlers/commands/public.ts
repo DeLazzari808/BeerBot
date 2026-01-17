@@ -178,7 +178,6 @@ export async function handleHelp(jid: string, isUserAdmin: boolean): Promise<voi
         `🍺 *COMANDOS DO BOT* 🍺\n\n` +
         `*/status* (ou */s*) — Ver contagem atual\n` +
         `*/rank* — Top 10 bebedores\n` +
-        `*/meu* — Suas estatísticas\n` +
         `*/elo* — Ver sistema de elos\n` +
         `*/hoje* — Estatísticas de hoje\n` +
         `*/help* — Esta mensagem\n\n` +
