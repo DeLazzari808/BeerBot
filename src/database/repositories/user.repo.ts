@@ -163,49 +163,24 @@ export const userRepository = {
     /**
      * Incrementa contagem do usuário (ou cria se não existir)
      * Retorna o novo total ou null se falhou
-     * Usa UPSERT para operação atômica e evitar race conditions
+     * Usa RPC function para incremento atômico no banco de dados
      */
     async incrementUserCount(userId: string, userName: string): Promise<number | null> {
         const supabase = getSupabase();
-        const now = new Date().toISOString();
 
-        // Primeiro tenta buscar o usuário existente
-        const { data: existingUser, error: selectError } = await supabase
-            .from('users')
-            .select('total_count')
-            .eq('id', userId)
-            .single();
+        // Usa RPC function para incremento atômico
+        const { data, error } = await supabase.rpc('increment_user_count', {
+            p_user_id: userId,
+            p_user_name: userName || 'Anônimo',
+        });
 
-        if (selectError && selectError.code !== 'PGRST116') {
-            logger.error({ event: 'user_increment_select_error', userId, error: selectError.message });
+        if (error) {
+            logger.error({ event: 'user_increment_rpc_error', userId, error: error.message });
             return null;
         }
 
-        const currentCount = existingUser?.total_count || 0;
-        const newTotal = currentCount + 1;
-
-        // Usa UPSERT para garantir atomicidade
-        const { data: updatedUser, error: upsertError } = await supabase
-            .from('users')
-            .upsert({
-                id: userId,
-                name: userName || 'Anônimo',
-                total_count: newTotal,
-                last_count_at: now
-            }, {
-                onConflict: 'id',
-                ignoreDuplicates: false
-            })
-            .select('total_count')
-            .single();
-
-        if (upsertError) {
-            logger.error({ event: 'user_increment_upsert_error', userId, error: upsertError.message });
-            return null;
-        }
-
-        // Retorna o total do banco (garantido correto)
-        return updatedUser?.total_count || newTotal;
+        // A RPC retorna diretamente o novo total
+        return data as number;
     },
 
     /**

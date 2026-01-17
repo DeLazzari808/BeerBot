@@ -19,6 +19,10 @@ import { getDonateMessage, maybeGetDonateHint } from '../config/donate.js';
 // Rate limiting
 const userCommandCooldowns = new Map<string, number>();
 
+// Rate limit específico para /ranking (1 hora)
+const RANKING_COOLDOWN_MS = 60 * 60 * 1000; // 1 hora
+const rankingCooldowns = new Map<string, number>();
+
 // Limpeza periódica do Map de cooldowns para evitar memory leak
 setInterval(() => {
     const now = Date.now();
@@ -26,6 +30,13 @@ setInterval(() => {
     for (const [userId, timestamp] of userCommandCooldowns.entries()) {
         if (now - timestamp > COOLDOWN_MS) {
             userCommandCooldowns.delete(userId);
+            cleaned++;
+        }
+    }
+    // Limpa também cooldowns de ranking
+    for (const [userId, timestamp] of rankingCooldowns.entries()) {
+        if (now - timestamp > RANKING_COOLDOWN_MS) {
+            rankingCooldowns.delete(userId);
             cleaned++;
         }
     }
@@ -86,7 +97,7 @@ function checkRateLimit(userId: string): { allowed: boolean; waitTime?: number }
 }
 
 // Lista de comandos públicos para rate limiting
-const PUBLIC_COMMANDS = ['status', 's', 'rank', 'ranking', 'top', 'meu', 'me', 'stats', 'elo', 'elos', 'help', 'ajuda', 'comandos', 'hoje', 'semana', 'week', 'donate', 'pix', 'doar'];
+const PUBLIC_COMMANDS = ['status', 's', 'rank', 'ranking', 'top', 'meu', 'stats', 'elo', 'elos', 'help', 'ajuda', 'comandos', 'hoje', 'semana', 'week', 'donate', 'pix', 'doar'];
 
 // Lista de comandos válidos para detectar comandos desconhecidos
 const VALID_COMMANDS = [...PUBLIC_COMMANDS, 'audit', 'auditoria', 'setcount', 'iniciar', 'fix', 'forcar', 'recap', 'recalc', 'sync', 'del', 'deletar', 'setuser'];
@@ -143,11 +154,21 @@ export async function handleCommand(
                     await replyToMessage(jid, STATS_BLOCKED_MESSAGE, message);
                     break;
                 }
+                // Rate limit específico de 1 hora para ranking
+                if (!isAdmin(senderId)) {
+                    const lastRanking = rankingCooldowns.get(senderId);
+                    const now = Date.now();
+                    if (lastRanking && now - lastRanking < RANKING_COOLDOWN_MS) {
+                        const waitMins = Math.ceil((RANKING_COOLDOWN_MS - (now - lastRanking)) / 60000);
+                        await replyToMessage(jid, `⏳ *Ei!* O /ranking só pode ser usado 1x por hora.\nTente novamente em ${waitMins} min. 🍺`, message);
+                        break;
+                    }
+                    rankingCooldowns.set(senderId, now);
+                }
                 await handleRanking(jid);
                 break;
 
             case 'meu':
-            case 'me':
             case 'stats':
                 await handleMyStats(jid, senderId, senderName, message);
                 break;

@@ -26,9 +26,6 @@ export const SUPABASE_TIMEOUT_MS = 10000; // 10 segundos
 export const WHATSAPP_RECONNECT_BASE_DELAY_MS = 1000;
 export const WHATSAPP_RECONNECT_MAX_DELAY_MS = 30000;
 
-// Cache
-export const COUNT_CACHE_TTL_MS = 2000; // 2 segundos
-
 // Limites
 export const MAX_COUNT_VALUE = GOAL; // Não permite setcount/fix acima da meta
 export const MIN_COUNT_VALUE = 0;
