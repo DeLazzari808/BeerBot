@@ -456,7 +456,7 @@ export const countRepository = {
             return null;
         }
 
-        // Atualiza ranking
+        // Atualiza ranking via código (sem trigger)
         const userUpdated = await userRepository.decrementUserCount(record.user_id);
         if (!userUpdated) {
             logger.warn({ event: 'count_delete_user_update_failed', userId: record.user_id });
@@ -500,7 +500,7 @@ export const countRepository = {
             return null;
         }
 
-        // Atualiza ranking
+        // Atualiza ranking via código (sem trigger)
         const userUpdated = await userRepository.decrementUserCount(record.user_id);
         if (!userUpdated) {
             logger.warn({ event: 'count_delete_user_update_failed', userId: record.user_id });
