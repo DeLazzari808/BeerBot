@@ -184,41 +184,23 @@ export const userRepository = {
     },
 
     /**
-     * Decrementa contagem do usuário
-     * Retorna true se operação foi bem-sucedida
+     * Decrementa contagem do usuário usando RPC atômico
+     * Retorna o novo total ou null se falhou
      */
-    async decrementUserCount(userId: string): Promise<boolean> {
+    async decrementUserCount(userId: string): Promise<number | null> {
         const supabase = getSupabase();
 
-        const { data: user, error: selectError } = await supabase
-            .from('users')
-            .select('*')
-            .eq('id', userId)
-            .single();
+        // Usa RPC para decremento atômico - evita race conditions
+        const { data, error } = await supabase.rpc('decrement_user_count', {
+            p_user_id: userId,
+        });
 
-        if (selectError) {
-            if (selectError.code !== 'PGRST116') {
-                logger.error({ event: 'user_decrement_select_error', userId, error: selectError.message });
-            }
-            return false;
+        if (error) {
+            logger.error({ event: 'user_decrement_rpc_error', userId, error: error.message });
+            return null;
         }
 
-        const userRow = user as UserRow;
-        if (userRow && userRow.total_count > 0) {
-            const { error: updateError } = await supabase
-                .from('users')
-                .update({
-                    total_count: userRow.total_count - 1
-                })
-                .eq('id', userId);
-
-            if (updateError) {
-                logger.error({ event: 'user_decrement_update_error', userId, error: updateError.message });
-                return false;
-            }
-        }
-
-        return true;
+        return data as number;
     },
 
     /**
@@ -339,5 +321,67 @@ export const userRepository = {
             totalCount: row.total_count,
             lastCountAt: row.last_count_at,
         };
+    },
+
+    /**
+     * Verifica e corrige inconsistências entre users.total_count e counts reais
+     * Retorna o número de usuários corrigidos (0 se tudo ok)
+     */
+    async checkAndFixConsistency(): Promise<number> {
+        const supabase = getSupabase();
+
+        // Usa uma query que encontra e corrige inconsistências em uma operação
+        const { data, error } = await supabase.rpc('check_and_fix_user_counts');
+
+        if (error) {
+            // Se a RPC não existir, faz manualmente
+            if (error.code === '42883') { // function does not exist
+                logger.warn({ event: 'consistency_check_rpc_missing', message: 'RPC não existe, usando fallback' });
+                return this.checkAndFixConsistencyFallback();
+            }
+            logger.error({ event: 'consistency_check_error', error: error.message });
+            return 0;
+        }
+
+        const fixed = (data as { fixed_count: number })?.fixed_count || 0;
+        if (fixed > 0) {
+            logger.warn({ event: 'consistency_fixed', usersFixed: fixed });
+        } else {
+            logger.debug({ event: 'consistency_check_ok' });
+        }
+
+        return fixed;
+    },
+
+    /**
+     * Fallback para verificação de consistência sem RPC
+     */
+    async checkAndFixConsistencyFallback(): Promise<number> {
+        const supabase = getSupabase();
+
+        // Busca usuários com inconsistências
+        const { data: inconsistent, error: checkError } = await supabase.rpc('get_inconsistent_users');
+
+        if (checkError) {
+            // Se não tiver a RPC, usa recalculateAll como fallback final
+            logger.warn({ event: 'consistency_fallback_to_recalc' });
+            await this.recalculateAll();
+            return -1; // Indica que fez recalc completo
+        }
+
+        if (!inconsistent || inconsistent.length === 0) {
+            return 0;
+        }
+
+        // Corrige cada usuário inconsistente
+        for (const user of inconsistent) {
+            await supabase
+                .from('users')
+                .update({ total_count: user.real_count })
+                .eq('id', user.id);
+        }
+
+        logger.warn({ event: 'consistency_fixed_fallback', usersFixed: inconsistent.length });
+        return inconsistent.length;
     },
 };

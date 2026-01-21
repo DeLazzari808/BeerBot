@@ -3,6 +3,17 @@ import { userRepository } from './user.repo.js';
 import { logger } from '../../utils/logger.js';
 import { withRetry } from '../../utils/retry.js';
 
+// Interface para row do Supabase vinda de RPC
+interface CountRowFromRPC {
+    id: number;
+    number: number;
+    user_id: string;
+    user_name: string | null;
+    message_id: string | null;
+    has_image: boolean;
+    created_at: string;
+}
+
 export interface CountRecord {
     id: number;
     number: number;
@@ -39,40 +50,50 @@ interface CountRow {
 
 export const countRepository = {
     /**
-     * Adiciona uma nova contagem
-     * Atualiza tabela users manualmente (sem trigger)
+     * Adiciona uma nova contagem usando RPC atômico
+     * Valida sequência e atualiza usuário em uma única transação
      */
     async add(input: CountInput): Promise<AddCountResult | null> {
         const supabase = getSupabase();
 
-        const { data, error } = await supabase
-            .from('counts')
-            .insert({
-                number: input.number,
-                user_id: input.userId,
-                user_name: input.userName || null,
-                message_id: input.messageId || null,
-                has_image: input.hasImage || false,
-            })
-            .select()
-            .single();
+        // Usa RPC atômico que valida sequência + insere + atualiza usuário
+        const { data, error } = await supabase.rpc('atomic_add_count', {
+            p_number: input.number,
+            p_user_id: input.userId,
+            p_user_name: input.userName || null,
+            p_message_id: input.messageId || null,
+            p_has_image: input.hasImage || false,
+        });
 
         if (error) {
-            // Provavelmente número duplicado
-            logger.warn({ event: 'count_add_error', number: input.number, error: error.message });
+            logger.error({ event: 'count_add_rpc_error', number: input.number, error: error.message });
             return null;
         }
 
-        // Atualiza ranking e recebe o novo total
-        const userTotal = await userRepository.incrementUserCount(input.userId, input.userName || 'Anônimo');
-        if (userTotal === null) {
-            logger.warn({ event: 'count_add_user_update_failed', userId: input.userId });
+        const result = data as { success: boolean; number?: number; id?: number; user_total?: number; error?: string; current_count?: number };
+
+        if (!result.success) {
+            logger.warn({
+                event: 'count_add_failed',
+                number: input.number,
+                reason: result.error,
+                currentCount: result.current_count
+            });
+            return null;
         }
 
-        logger.info({ event: 'count_added', number: input.number, userId: input.userId, userTotal });
+        logger.info({ event: 'count_added', number: result.number, userId: input.userId, userTotal: result.user_total });
+
+        // Busca o registro completo para retornar
+        const record = await this.getById(result.id!);
+        if (!record) {
+            logger.error({ event: 'count_add_fetch_error', id: result.id });
+            return null;
+        }
+
         return {
-            record: this.mapRow(data as CountRow),
-            userTotal: userTotal || 1,
+            record,
+            userTotal: result.user_total || 1,
         };
     },
 
@@ -377,137 +398,144 @@ export const countRepository = {
 
     /**
      * Força uma contagem específica (admin only)
-     * Deleta números >= number e insere o novo
+     * Usa RPC atômico que deleta >= number, insere novo e recalcula usuários
      */
     async forceCount(number: number, userId: string, userName?: string): Promise<boolean> {
         const supabase = getSupabase();
 
         logger.info({ event: 'count_force_start', number, userId });
 
-        // Deleta números futuros
-        const { error: deleteError } = await supabase
-            .from('counts')
-            .delete()
-            .gte('number', number);
+        // Usa RPC atômico que faz tudo em uma transação
+        const { data, error } = await supabase.rpc('atomic_force_count', {
+            p_number: number,
+            p_user_id: userId,
+            p_user_name: userName || 'Admin',
+        });
 
-        if (deleteError) {
-            logger.error({ event: 'count_force_delete_error', number, error: deleteError.message });
+        if (error) {
+            logger.error({ event: 'count_force_rpc_error', number, error: error.message });
             return false;
         }
 
-        // Insere novo
-        const { error: insertError } = await supabase
-            .from('counts')
-            .insert({
-                number,
-                user_id: userId,
-                user_name: userName || 'Admin',
-                message_id: 'forced',
-                has_image: false,
-            });
+        const result = data as { success: boolean; deleted_count?: number; new_number?: number; affected_users?: number };
 
-        if (insertError) {
-            logger.error({ event: 'count_force_insert_error', number, error: insertError.message });
+        if (!result.success) {
+            logger.error({ event: 'count_force_failed', number, result });
             return false;
         }
 
-        // Recalcula tudo para garantir consistência
-        try {
-            await userRepository.recalculateAll();
-        } catch (e) {
-            logger.error({ event: 'count_force_recalculate_error', error: e instanceof Error ? e.message : String(e) });
-        }
+        logger.info({
+            event: 'count_forced',
+            number,
+            userId,
+            deletedCount: result.deleted_count,
+            affectedUsers: result.affected_users
+        });
 
-        logger.info({ event: 'count_forced', number, userId });
         return true;
     },
 
     /**
      * Deleta contagem por message_id (quando usuário apaga a mensagem)
-     * Atualiza ranking manualmente
+     * Usa RPC atômico que deleta e decrementa usuário em uma transação
      */
     async deleteByMessageId(messageId: string): Promise<CountRecord | null> {
         const supabase = getSupabase();
 
-        // Busca o registro antes de deletar
-        const { data: record, error: selectError } = await supabase
-            .from('counts')
-            .select('*')
-            .eq('message_id', messageId)
-            .single();
+        // Usa RPC atômico que deleta + decrementa em uma transação
+        const { data, error } = await supabase.rpc('atomic_delete_by_message_id', {
+            p_message_id: messageId,
+        });
 
-        if (selectError) {
-            if (selectError.code !== 'PGRST116') {
-                logger.error({ event: 'count_delete_by_message_select_error', messageId, error: selectError.message });
+        if (error) {
+            logger.error({ event: 'count_delete_by_message_rpc_error', messageId, error: error.message });
+            return null;
+        }
+
+        const result = data as {
+            success: boolean;
+            error?: string;
+            record?: {
+                id: number;
+                number: number;
+                user_id: string;
+                user_name: string | null;
+                message_id: string | null;
+                has_image: boolean;
+                created_at: string;
+            };
+            new_user_total?: number;
+        };
+
+        if (!result.success) {
+            if (result.error === 'NOT_FOUND') {
+                logger.debug({ event: 'count_delete_by_message_not_found', messageId });
+            } else {
+                logger.warn({ event: 'count_delete_by_message_failed', messageId, error: result.error });
             }
             return null;
         }
 
-        if (!record) return null;
+        logger.info({
+            event: 'count_deleted_by_message',
+            messageId,
+            number: result.record?.number,
+            userId: result.record?.user_id,
+            newUserTotal: result.new_user_total
+        });
 
-        // Deleta o registro
-        const { error: deleteError } = await supabase
-            .from('counts')
-            .delete()
-            .eq('message_id', messageId);
-
-        if (deleteError) {
-            logger.error({ event: 'count_delete_by_message_error', messageId, error: deleteError.message });
-            return null;
-        }
-
-        // Atualiza ranking via código (sem trigger)
-        const userUpdated = await userRepository.decrementUserCount(record.user_id);
-        if (!userUpdated) {
-            logger.warn({ event: 'count_delete_user_update_failed', userId: record.user_id });
-        }
-
-        logger.info({ event: 'count_deleted_by_message', messageId, number: record.number });
-        return this.mapRow(record as CountRow);
+        return this.mapRow(result.record as CountRow);
     },
 
     /**
      * Deleta contagem por número (comando /del)
-     * Atualiza ranking manualmente
+     * Usa RPC atômico que deleta e decrementa usuário em uma transação
      */
     async deleteByNumber(number: number): Promise<CountRecord | null> {
         const supabase = getSupabase();
 
-        // Busca o registro antes de deletar
-        const { data: record, error: selectError } = await supabase
-            .from('counts')
-            .select('*')
-            .eq('number', number)
-            .single();
+        // Usa RPC atômico que deleta + decrementa em uma transação
+        const { data, error } = await supabase.rpc('atomic_delete_count', {
+            p_number: number,
+        });
 
-        if (selectError) {
-            if (selectError.code !== 'PGRST116') {
-                logger.error({ event: 'count_delete_by_number_select_error', number, error: selectError.message });
+        if (error) {
+            logger.error({ event: 'count_delete_by_number_rpc_error', number, error: error.message });
+            return null;
+        }
+
+        const result = data as {
+            success: boolean;
+            error?: string;
+            record?: {
+                id: number;
+                number: number;
+                user_id: string;
+                user_name: string | null;
+                message_id: string | null;
+                has_image: boolean;
+                created_at: string;
+            };
+            new_user_total?: number;
+        };
+
+        if (!result.success) {
+            if (result.error === 'NOT_FOUND') {
+                logger.debug({ event: 'count_delete_not_found', number });
+            } else {
+                logger.warn({ event: 'count_delete_failed', number, error: result.error });
             }
             return null;
         }
 
-        if (!record) return null;
+        logger.info({
+            event: 'count_deleted_by_number',
+            number,
+            userId: result.record?.user_id,
+            newUserTotal: result.new_user_total
+        });
 
-        // Deleta o registro
-        const { error: deleteError } = await supabase
-            .from('counts')
-            .delete()
-            .eq('number', number);
-
-        if (deleteError) {
-            logger.error({ event: 'count_delete_by_number_error', number, error: deleteError.message });
-            return null;
-        }
-
-        // Atualiza ranking via código (sem trigger)
-        const userUpdated = await userRepository.decrementUserCount(record.user_id);
-        if (!userUpdated) {
-            logger.warn({ event: 'count_delete_user_update_failed', userId: record.user_id });
-        }
-
-        logger.info({ event: 'count_deleted_by_number', number, userId: record.user_id });
-        return this.mapRow(record as CountRow);
+        return this.mapRow(result.record as CountRow);
     },
 
     mapRow(row: CountRow): CountRecord {
