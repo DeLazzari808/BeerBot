@@ -6,6 +6,7 @@ import { countRepository } from '../database/repositories/count.repo.js';
 import { userRepository } from '../database/repositories/user.repo.js';
 import { sendMessage, replyToMessage } from '../services/whatsapp.js';
 import { logger } from '../utils/logger.js';
+import { messageQueue } from '../utils/queue.js';
 import {
     COOLDOWN_MS,
     COOLDOWN_CLEANUP_INTERVAL_MS,
@@ -262,17 +263,21 @@ async function handleRecalc(
         return;
     }
 
-    logger.info({ event: 'admin_command_executed', command: 'recalc', senderId });
     await replyToMessage(jid, '🔄 Recalculando estatísticas... aguarde.', message);
 
-    try {
-        const count = await userRepository.recalculateAll();
-        await sendMessage(jid, `✅ Sincronização concluída!\n\n👥 ${count} usuários atualizados com base no histórico de cervejas.`);
-        logger.info({ event: 'recalc_complete', usersUpdated: count, executedBy: senderId });
-    } catch (error) {
-        logger.error({ event: 'recalc_error', error: error instanceof Error ? error.message : String(error), executedBy: senderId });
-        await replyToMessage(jid, `❌ Erro ao recalcular estatísticas: ${error instanceof Error ? error.message : 'Erro desconhecido'}`, message);
-    }
+    // Usa a fila para evitar conflitos com contagens em andamento
+    await messageQueue.add(async () => {
+        logger.info({ event: 'admin_command_executed', command: 'recalc', senderId });
+
+        try {
+            const count = await userRepository.recalculateAll();
+            await sendMessage(jid, `✅ Sincronização concluída!\n\n👥 ${count} usuários atualizados com base no histórico de cervejas.`);
+            logger.info({ event: 'recalc_complete', usersUpdated: count, executedBy: senderId });
+        } catch (error) {
+            logger.error({ event: 'recalc_error', error: error instanceof Error ? error.message : String(error), executedBy: senderId });
+            await sendMessage(jid, `❌ Erro ao recalcular estatísticas: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+        }
+    });
 }
 
 async function handleStatus(jid: string): Promise<void> {
@@ -480,23 +485,26 @@ async function handleSetCount(
         return;
     }
 
-    const current = await counterService.getCurrentCount();
-    if (current > 0) {
-        await replyToMessage(
-            jid,
-            `❌ Já existe uma contagem em andamento (${current}). Use /fix para corrigir.`,
-            message
-        );
-        return;
-    }
+    // Usa a fila para evitar race conditions com mensagens de contagem
+    await messageQueue.add(async () => {
+        const current = await counterService.getCurrentCount();
+        if (current > 0) {
+            await replyToMessage(
+                jid,
+                `❌ Já existe uma contagem em andamento (${current}). Use /fix para corrigir.`,
+                message
+            );
+            return;
+        }
 
-    logger.info({ event: 'admin_command_executed', command: 'setcount', number, senderId });
-    const success = await counterService.setInitialCount(number, senderId, senderName);
-    if (success) {
-        await sendMessage(jid, `✅ Contagem iniciada em *${number}*! O próximo é *${number + 1}*. 🍺`);
-    } else {
-        await replyToMessage(jid, '❌ Erro ao definir contagem inicial.', message);
-    }
+        logger.info({ event: 'admin_command_executed', command: 'setcount', number, senderId });
+        const success = await counterService.setInitialCount(number, senderId, senderName);
+        if (success) {
+            await sendMessage(jid, `✅ Contagem iniciada em *${number}*! O próximo é *${number + 1}*. 🍺`);
+        } else {
+            await replyToMessage(jid, '❌ Erro ao definir contagem inicial.', message);
+        }
+    });
 }
 
 async function handleForceCount(
@@ -518,13 +526,16 @@ async function handleForceCount(
         return;
     }
 
-    logger.info({ event: 'admin_command_executed', command: 'fix', number, senderId });
-    const success = await counterService.forceCount(number, senderId, senderName);
-    if (success) {
-        await sendMessage(jid, `✅ Contagem forçada para *${number}*! O próximo é *${number + 1}*. 🍺`);
-    } else {
-        await replyToMessage(jid, '❌ Erro ao forçar contagem.', message);
-    }
+    // Usa a fila para evitar race conditions com mensagens de contagem
+    await messageQueue.add(async () => {
+        logger.info({ event: 'admin_command_executed', command: 'fix', number, senderId });
+        const success = await counterService.forceCount(number, senderId, senderName);
+        if (success) {
+            await sendMessage(jid, `✅ Contagem forçada para *${number}*! O próximo é *${number + 1}*. 🍺`);
+        } else {
+            await replyToMessage(jid, '❌ Erro ao forçar contagem.', message);
+        }
+    });
 }
 
 /**
@@ -548,18 +559,21 @@ async function handleDeleteCount(
         return;
     }
 
-    logger.info({ event: 'admin_command_executed', command: 'del', number, senderId });
-    const deleted = await countRepository.deleteByNumber(number);
-    if (deleted) {
-        await sendMessage(
-            jid,
-            `✅ Cerveja *#${number}* deletada!\n` +
-            `👤 Era de: ${deleted.userName || 'Anônimo'}\n` +
-            `📊 Ranking atualizado automaticamente.`
-        );
-    } else {
-        await replyToMessage(jid, `❌ Cerveja #${number} não encontrada.`, message);
-    }
+    // Usa a fila para evitar race conditions com mensagens de contagem
+    await messageQueue.add(async () => {
+        logger.info({ event: 'admin_command_executed', command: 'del', number, senderId });
+        const deleted = await countRepository.deleteByNumber(number);
+        if (deleted) {
+            await sendMessage(
+                jid,
+                `✅ Cerveja *#${number}* deletada!\n` +
+                `👤 Era de: ${deleted.userName || 'Anônimo'}\n` +
+                `📊 Ranking atualizado automaticamente.`
+            );
+        } else {
+            await replyToMessage(jid, `❌ Cerveja #${number} não encontrada.`, message);
+        }
+    });
 }
 
 /**
@@ -591,31 +605,34 @@ async function handleSetUser(
 
     const identifier = args.slice(0, -1).join(' ');
 
-    // Tenta encontrar por ID primeiro
-    let user = await userRepository.getStats(identifier);
+    // Usa a fila para evitar race conditions com contagens
+    await messageQueue.add(async () => {
+        // Tenta encontrar por ID primeiro
+        let user = await userRepository.getStats(identifier);
 
-    // Se não encontrou, tenta por nome
-    if (!user) {
-        user = await userRepository.findByName(identifier);
-    }
+        // Se não encontrou, tenta por nome
+        if (!user) {
+            user = await userRepository.findByName(identifier);
+        }
 
-    if (!user) {
-        await replyToMessage(jid, `❌ Usuário "${identifier}" não encontrado.`, message);
-        return;
-    }
+        if (!user) {
+            await replyToMessage(jid, `❌ Usuário "${identifier}" não encontrado.`, message);
+            return;
+        }
 
-    logger.info({ event: 'admin_command_executed', command: 'setuser', userId: user.id, oldTotal: user.totalCount, newTotal: total, senderId });
-    const success = await userRepository.setUserTotal(user.id, total);
-    if (success) {
-        await sendMessage(
-            jid,
-            `✅ Total atualizado!\n` +
-            `👤 Usuário: *${user.name || user.id}*\n` +
-            `🍺 Novo total: *${total}* cervejas`
-        );
-    } else {
-        await replyToMessage(jid, '❌ Erro ao atualizar total do usuário.', message);
-    }
+        logger.info({ event: 'admin_command_executed', command: 'setuser', userId: user.id, oldTotal: user.totalCount, newTotal: total, senderId });
+        const success = await userRepository.setUserTotal(user.id, total);
+        if (success) {
+            await sendMessage(
+                jid,
+                `✅ Total atualizado!\n` +
+                `👤 Usuário: *${user.name || user.id}*\n` +
+                `🍺 Novo total: *${total}* cervejas`
+            );
+        } else {
+            await replyToMessage(jid, '❌ Erro ao atualizar total do usuário.', message);
+        }
+    });
 }
 
 // Helpers

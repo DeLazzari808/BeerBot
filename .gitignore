@@ -4,9 +4,11 @@ dist/
 
 # Environment
 .env
+.env.*
 
 # Auth Baileys
 auth_info/
+auth_info_baileys/
 
 # Database
 data/*.db
@@ -23,7 +25,22 @@ scripts/
 # OS
 .DS_Store
 Thumbs.db
+nul
 
 # IDE
 .vscode/
 .idea/
+
+# Claude/AI tools
+.claude/
+.loki/
+.mcp.json
+claudeHis/
+
+# Manual/temporary files
+ranking_att_manual/
+1milhao/
+ANALISE_COMPLETA.md
+GESTAO_BOT.md
+RANKING_BACKUP*.md
+quandoclaudevoltar.md
