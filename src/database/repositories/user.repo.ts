@@ -322,4 +322,66 @@ export const userRepository = {
             lastCountAt: row.last_count_at,
         };
     },
+
+    /**
+     * Verifica e corrige inconsistências entre users.total_count e counts reais
+     * Retorna o número de usuários corrigidos (0 se tudo ok)
+     */
+    async checkAndFixConsistency(): Promise<number> {
+        const supabase = getSupabase();
+
+        // Usa uma query que encontra e corrige inconsistências em uma operação
+        const { data, error } = await supabase.rpc('check_and_fix_user_counts');
+
+        if (error) {
+            // Se a RPC não existir, faz manualmente
+            if (error.code === '42883') { // function does not exist
+                logger.warn({ event: 'consistency_check_rpc_missing', message: 'RPC não existe, usando fallback' });
+                return this.checkAndFixConsistencyFallback();
+            }
+            logger.error({ event: 'consistency_check_error', error: error.message });
+            return 0;
+        }
+
+        const fixed = (data as { fixed_count: number })?.fixed_count || 0;
+        if (fixed > 0) {
+            logger.warn({ event: 'consistency_fixed', usersFixed: fixed });
+        } else {
+            logger.debug({ event: 'consistency_check_ok' });
+        }
+
+        return fixed;
+    },
+
+    /**
+     * Fallback para verificação de consistência sem RPC
+     */
+    async checkAndFixConsistencyFallback(): Promise<number> {
+        const supabase = getSupabase();
+
+        // Busca usuários com inconsistências
+        const { data: inconsistent, error: checkError } = await supabase.rpc('get_inconsistent_users');
+
+        if (checkError) {
+            // Se não tiver a RPC, usa recalculateAll como fallback final
+            logger.warn({ event: 'consistency_fallback_to_recalc' });
+            await this.recalculateAll();
+            return -1; // Indica que fez recalc completo
+        }
+
+        if (!inconsistent || inconsistent.length === 0) {
+            return 0;
+        }
+
+        // Corrige cada usuário inconsistente
+        for (const user of inconsistent) {
+            await supabase
+                .from('users')
+                .update({ total_count: user.real_count })
+                .eq('id', user.id);
+        }
+
+        logger.warn({ event: 'consistency_fixed_fallback', usersFixed: inconsistent.length });
+        return inconsistent.length;
+    },
 };

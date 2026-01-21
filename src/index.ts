@@ -5,6 +5,7 @@ import { handleMessage } from './handlers/message.handler.js';
 import { handleDelete } from './handlers/delete.handler.js';
 import { startDailyRecapScheduler, stopDailyRecapScheduler } from './services/scheduler.js';
 import { counterService } from './core/counter.js';
+import { userRepository } from './database/repositories/user.repo.js';
 import { logger } from './utils/logger.js';
 
 let isShuttingDown = false;
@@ -27,6 +28,13 @@ async function main(): Promise<void> {
         process.exit(1);
     }
     logger.info({ event: 'supabase_connected' });
+
+    // Verifica e corrige inconsistências de contagem no startup
+    const fixedUsers = await userRepository.checkAndFixConsistency();
+    if (fixedUsers > 0) {
+        logger.warn({ event: 'startup_consistency_fix', usersFixed: fixedUsers });
+        console.log(`⚠️ Corrigidas inconsistências em ${fixedUsers} usuário(s)`);
+    }
 
     // Verifica se precisa definir contagem inicial
     const currentCount = await counterService.getCurrentCount();
