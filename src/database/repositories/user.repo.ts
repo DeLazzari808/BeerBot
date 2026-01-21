@@ -184,41 +184,23 @@ export const userRepository = {
     },
 
     /**
-     * Decrementa contagem do usuário
-     * Retorna true se operação foi bem-sucedida
+     * Decrementa contagem do usuário usando RPC atômico
+     * Retorna o novo total ou null se falhou
      */
-    async decrementUserCount(userId: string): Promise<boolean> {
+    async decrementUserCount(userId: string): Promise<number | null> {
         const supabase = getSupabase();
 
-        const { data: user, error: selectError } = await supabase
-            .from('users')
-            .select('*')
-            .eq('id', userId)
-            .single();
+        // Usa RPC para decremento atômico - evita race conditions
+        const { data, error } = await supabase.rpc('decrement_user_count', {
+            p_user_id: userId,
+        });
 
-        if (selectError) {
-            if (selectError.code !== 'PGRST116') {
-                logger.error({ event: 'user_decrement_select_error', userId, error: selectError.message });
-            }
-            return false;
+        if (error) {
+            logger.error({ event: 'user_decrement_rpc_error', userId, error: error.message });
+            return null;
         }
 
-        const userRow = user as UserRow;
-        if (userRow && userRow.total_count > 0) {
-            const { error: updateError } = await supabase
-                .from('users')
-                .update({
-                    total_count: userRow.total_count - 1
-                })
-                .eq('id', userId);
-
-            if (updateError) {
-                logger.error({ event: 'user_decrement_update_error', userId, error: updateError.message });
-                return false;
-            }
-        }
-
-        return true;
+        return data as number;
     },
 
     /**

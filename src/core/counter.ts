@@ -1,5 +1,5 @@
 import { countRepository } from '../database/repositories/count.repo.js';
-import { validateSequence, ValidationResult } from './validator.js';
+import { ValidationResult } from './validator.js';
 import { logger } from '../utils/logger.js';
 import { GOAL } from '../config/constants.js';
 
@@ -31,20 +31,11 @@ export const counterService = {
 
     /**
      * Tenta adicionar uma nova contagem
+     * A RPC atômica valida sequência + insere + atualiza usuário em uma única transação
      */
     async attemptCount(attempt: CountAttempt): Promise<CountResponse> {
-        const currentCount = await this.getCurrentCount();
-        const validation = validateSequence(attempt.number, currentCount);
-
-        if (validation.status !== 'VALID') {
-            return {
-                success: false,
-                validation,
-                currentCount,
-            };
-        }
-
-        // Tenta inserir no banco
+        // A RPC atômica faz validação + inserção + atualização de usuário
+        // em uma única transação com lock para evitar race conditions
         const result = await countRepository.add({
             number: attempt.number,
             userId: attempt.userId,
@@ -54,7 +45,7 @@ export const counterService = {
         });
 
         if (!result) {
-            // Provavelmente alguém foi mais rápido - busca contagem atual
+            // RPC falhou (sequência inválida, duplicado, ou erro)
             const newCurrentCount = await this.getCurrentCount();
             return {
                 success: false,
@@ -78,7 +69,12 @@ export const counterService = {
 
         return {
             success: true,
-            validation,
+            validation: {
+                status: 'VALID',
+                expectedNumber: attempt.number,
+                receivedNumber: attempt.number,
+                message: '',
+            },
             currentCount: attempt.number,
             userTotal: result.userTotal,
         };
