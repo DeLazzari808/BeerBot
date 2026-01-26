@@ -54,6 +54,8 @@ export const userRepository = {
         const { data, error } = await supabase
             .from('users')
             .select('*')
+            .neq('id', 'sync_system')
+            .gt('total_count', 0)
             .order('total_count', { ascending: false })
             .limit(n);
 
