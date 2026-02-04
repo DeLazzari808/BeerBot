@@ -16,6 +16,7 @@ import {
     GOAL,
 } from '../config/constants.js';
 import { getDonateMessage, maybeGetDonateHint } from '../config/donate.js';
+import { handleBanVagabundos, handleTestBan } from './commands/ban.js';
 
 // Rate limiting
 const userCommandCooldowns = new Map<string, number>();
@@ -101,7 +102,7 @@ function checkRateLimit(userId: string): { allowed: boolean; waitTime?: number }
 const PUBLIC_COMMANDS = ['status', 's', 'rank', 'ranking', 'top', 'elo', 'elos', 'help', 'ajuda', 'comandos', 'hoje', 'semana', 'week', 'donate', 'pix', 'doar'];
 
 // Lista de comandos válidos para detectar comandos desconhecidos
-const VALID_COMMANDS = [...PUBLIC_COMMANDS, 'audit', 'auditoria', 'setcount', 'iniciar', 'fix', 'forcar', 'recap', 'recalc', 'sync', 'del', 'deletar', 'setuser'];
+const VALID_COMMANDS = [...PUBLIC_COMMANDS, 'audit', 'auditoria', 'setcount', 'iniciar', 'fix', 'forcar', 'recap', 'recalc', 'sync', 'del', 'deletar', 'setuser', 'banvagabundos', 'testban'];
 
 /**
  * Handler de comandos
@@ -240,6 +241,14 @@ export async function handleCommand(
 
             case 'setuser':
                 await handleSetUser(jid, args, senderId, message);
+                break;
+
+            case 'banvagabundos':
+                await handleBanVagabundos(jid, args, senderId, message);
+                break;
+
+            case 'testban':
+                await handleTestBan(jid, args, senderId, message);
                 break;
 
             default:
@@ -452,7 +461,9 @@ async function handleHelp(jid: string, isUserAdmin: boolean): Promise<void> {
             `*/del <N>* — Deleta uma cerveja\n` +
             `*/setuser <nome> <N>* — Define total de usuário\n` +
             `*/recalc* — Recalcula estatísticas\n` +
-            `*/recap* — Envia recap do dia`;
+            `*/recap* — Envia recap do dia\n` +
+            `*/testban [N]* — Preview de quem seria removido\n` +
+            `*/banvagabundos [N]* — Remove quem tem < N cervejas`;
     }
 
     // Adiciona hint de doação no final do help

@@ -1,0 +1,4 @@
+| posicao | user_id | user_name | contagem_real | contagem_tabela_users | diferenca | primeira_contagem | ultima_contagem |
+| ------- | ---------------------------- | --------------------------------- | ------------- | --------------------- | --------- | ----------------------------- | ----------------------------- |
+| 4       | 72263395233792@lid           | Gabryel Haertel                   | 107           | 147                   | -40       | 2026-01-13 16:05:36+00        | 2026-01-25 16:30:55.47859+00  |
+... (Please paste the FULL table content here, replacing this placeholder) ...

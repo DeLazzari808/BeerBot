@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guia: Ban Massivo - Grupo 1 Milhão de Cervejas 🍺</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .section {
+            margin-bottom: 40px;
+        }
+
+        .section h2 {
+            color: #667eea;
+            font-size: 1.8em;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #667eea;
+        }
+
+        .warning {
+            background: #fff3cd;
+            border-left: 5px solid #ffc107;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+
+        .warning h3 {
+            color: #856404;
+            margin-bottom: 10px;
+        }
+
+        .danger {
+            background: #f8d7da;
+            border-left: 5px solid #dc3545;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+
+        .danger h3 {
+            color: #721c24;
+            margin-bottom: 10px;
+        }
+
+        .success {
+            background: #d4edda;
+            border-left: 5px solid #28a745;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+
+        .success h3 {
+            color: #155724;
+            margin-bottom: 10px;
+        }
+
+        .step {
+            background: #f8f9fa;
+            padding: 20px;
+            margin: 15px 0;
+            border-radius: 10px;
+            border-left: 5px solid #667eea;
+        }
+
+        .step h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+
+        .step-number {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            margin-right: 10px;
+            font-weight: bold;
+        }
+
+        code {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        pre {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 20px;
+            border-radius: 10px;
+            overflow-x: auto;
+            margin: 15px 0;
+            font-size: 0.9em;
+            line-height: 1.5;
+        }
+
+        ul,
+        ol {
+            margin-left: 20px;
+            margin-top: 10px;
+        }
+
+        li {
+            margin: 8px 0;
+        }
+
+        .checklist {
+            list-style: none;
+            margin-left: 0;
+        }
+
+        .checklist li:before {
+            content: "☑️ ";
+            margin-right: 10px;
+        }
+
+        .footer {
+            background: #f8f9fa;
+            padding: 30px;
+            text-align: center;
+            color: #6c757d;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: bold;
+            margin: 5px;
+        }
+
+        .badge-critical {
+            background: #dc3545;
+            color: white;
+        }
+
+        .badge-important {
+            background: #ffc107;
+            color: #333;
+        }
+
+        .badge-optional {
+            background: #17a2b8;
+            color: white;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        th,
+        td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        th {
+            background: #667eea;
+            color: white;
+            font-weight: bold;
+        }
+
+        tr:hover {
+            background: #f8f9fa;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🍺 Ban Massivo - Guia Completo</h1>
+            <p>Grupo 1 Milhão de Cervejas</p>
+            <p style="font-size: 0.9em; margin-top: 10px;">Remoção automatizada de participantes com baixa contribuição
+            </p>
+        </div>
+
+        <div class="content">
+
+            <!-- INTRODUÇÃO -->
+            <div class="section">
+                <h2>📋 O que esse comando faz?</h2>
+                <p>O comando <code>!banvagabundos</code> remove <strong>automaticamente e em massa</strong> todos os
+                    participantes do grupo que:</p>
+                <ul>
+                    <li>Registraram menos de 2 cervejas no banco de dados Supabase</li>
+                    <li>Não são administradores do grupo</li>
+                    <li>Estão cadastrados na tabela de cervejas</li>
+                </ul>
+
+                <div class="danger">
+                    <h3>⚠️ ATENÇÃO: Ação Irreversível!</h3>
+                    <p>Uma vez executado, o comando remove TODOS os vagabundos instantaneamente. Não há confirmação
+                        adicional. Você precisará re-adicionar manualmente se remover alguém por engano.</p>
+                </div>
+            </div>
+
+            <!-- PRÉ-REQUISITOS -->
+            <div class="section">
+                <h2>✅ Pré-requisitos (Verificar ANTES)</h2>
+
+                <div class="step">
+                    <h3><span class="step-number">1</span>Verificar Estrutura do Supabase</h3>
+                    <p>Sua tabela <code>cervejas</code> precisa ter exatamente esta estrutura:</p>
+                    <table>
+                        <tr>
+                            <th>Coluna</th>
+                            <th>Tipo</th>
+                            <th>Exemplo</th>
+                            <th>Obrigatório</th>
+                        </tr>
+                        <tr>
+                            <td><code>whatsapp_number</code></td>
+                            <td>text</td>
+                            <td>5541999999999</td>
+                            <td>✅ Sim</td>
+                        </tr>
+                        <tr>
+                            <td><code>total_cervejas</code></td>
+                            <td>integer</td>
+                            <td>0, 1, 2, 10...</td>
+                            <td>✅ Sim</td>
+                        </tr>
+                    </table>
+
+                    <div class="warning">
+                        <h3>⚠️ Formato do Número</h3>
+                        <p>Os números devem estar armazenados <strong>SEM</strong> o <code>+</code> e
+                            <strong>SEM</strong> o <code>@s.whatsapp.net</code></p>
+                        <p><strong>✅ Correto:</strong> <code>5541999999999</code></p>
+                        <p><strong>❌ Errado:</strong> <code>+5541999999999</code> ou
+                            <code>5541999999999@s.whatsapp.net</code></p>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <h3><span class="step-number">2</span>Verificar Credenciais do Supabase</h3>
+                    <p>Certifique-se que você tem configurado no seu bot:</p>
+                    <ul class="checklist">
+                        <li>Supabase URL</li>
+                        <li>Supabase Anon Key (ou Service Key)</li>
+                        <li>Cliente Supabase inicializado corretamente</li>
+                    </ul>
+                </div>
+
+                <div class="step">
+                    <h3><span class="step-number">3</span>Verificar Permissões do Bot</h3>
+                    <ul class="checklist">
+                        <li>Bot é admin do grupo</li>
+                        <li>Bot tem permissão para remover participantes</li>
+                        <li>Número admin está configurado corretamente</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- INSTALAÇÃO -->
+            <div class="section">
+                <h2>🔧 Passo a Passo - Instalação</h2>
+
+                <div class="step">
+                    <h3><span class="step-number">1</span>Adicionar Código ao Bot</h3>
+                    <p>Cole este código no arquivo principal do seu bot (onde você já processa mensagens):</p>
+
+                    <pre>
+// ============================================
+// COMANDO: BAN MASSIVO DE VAGABUNDOS
+// ============================================
+
+const NUMERO_ADMIN = '5541988888888'; // ALTERE PARA SEU NÚMERO
+
+// Função de normalização de números
+const normalizarNumero = (num) => {
+  return num.replace(/[^0-9]/g, '');
+};
+
+// Função principal de ban massivo
+const banVagabundos = async (sock, groupId, minCervejas = 2) => {
+  try {
+    console.log('🚀 Iniciando ban massivo...');
+    
+    // 1. Consulta Supabase
+    const { data: usuarios, error } = await supabase
+      .from('cervejas')
+      .select('whatsapp_number, total_cervejas')
+      .lt('total_cervejas', minCervejas);
+    
+    if (error) {
+      console.error('Erro ao consultar Supabase:', error);
+      throw error;
+    }
+    
+    console.log(`📊 Encontrados ${usuarios.length} vagabundos no banco`);
+    
+    // 2. Pega metadados do grupo
+    const groupMetadata = await sock.groupMetadata(groupId);
+    
+    // 3. Filtra vagabundos (exceto admins)
+    const vagabundos = groupMetadata.participants
+      .filter(p => {
+        // NÃO REMOVE ADMINS
+        if (p.admin) {
+          console.log(`⚠️ Pulando admin: ${p.id}`);
+          return false;
+        }
+        
+        const numero = normalizarNumero(p.id.split('@')[0]);
+        const encontrado = usuarios.some(u => {
+          return normalizarNumero(u.whatsapp_number) === numero;
+        });
+        
+        return encontrado;
+      })
+      .map(p => p.id);
+    
+    console.log(`🎯 ${vagabundos.length} vagabundos serão removidos`);
+    
+    // 4. Remove em massa
+    if (vagabundos.length > 0) {
+      try {
+        await sock.groupParticipantsUpdate(
+          groupId,
+          vagabundos,
+          'remove'
+        );
+        
+        await sock.sendMessage(groupId, {
+          text: `🍺 LIMPEZA REALIZADA!\n\n` +
+                `${vagabundos.length} vagabundos removidos.\n\n` +
+                `Mínimo exigido: ${minCervejas} cervejas 🚮\n\n` +
+                `Contribua ou caia fora! 💪`
+        });
+        
+        console.log(`✅ ${vagabundos.length} removidos com sucesso`);
+        return vagabundos.length;
+        
+      } catch (removeError) {
+        console.error('Erro ao remover participantes:', removeError);
+        await sock.sendMessage(groupId, {
+          text: `⚠️ Erro parcial ao remover participantes. Verifique os logs.`
+        });
+      }
+    } else {
+      await sock.sendMessage(groupId, {
+        text: '✅ Nenhum vagabundo encontrado. Todos estão contribuindo! 🍺'
+      });
+      return 0;
+    }
+    
+  } catch (error) {
+    console.error('❌ Erro no ban massivo:', error);
+    await sock.sendMessage(groupId, {
+      text: '❌ Erro ao realizar limpeza. Verifique os logs do servidor.'
+    });
+  }
+};
+
+// Handler de mensagens (adicione onde você já processa mensagens)
+sock.ev.on('messages.upsert', async ({ messages }) => {
+  const msg = messages[0];
+  if (!msg.message) return;
+  
+  const text = msg.message.conversation || 
+               msg.message.extendedTextMessage?.text || '';
+  
+  const isGroup = msg.key.remoteJid.endsWith('@g.us');
+  const senderNumber = msg.key.participant?.split('@')[0] || 
+                       msg.key.remoteJid?.split('@')[0];
+  const isAdmin = normalizarNumero(senderNumber) === normalizarNumero(NUMERO_ADMIN);
+  
+  // COMANDO: !banvagabundos
+  if (isGroup && isAdmin && text.startsWith('!banvagabundos')) {
+    const args = text.split(' ');
+    const threshold = args[1] ? parseInt(args[1]) : 2;
+    
+    await banVagabundos(sock, msg.key.remoteJid, threshold);
+  }
+  
+  // COMANDO: !testban (preview sem remover)
+  if (isGroup && isAdmin && text === '!testban') {
+    const { data: usuarios } = await supabase
+      .from('cervejas')
+      .select('whatsapp_number, total_cervejas')
+      .lt('total_cervejas', 2);
+    
+    const groupMetadata = await sock.groupMetadata(msg.key.remoteJid);
+    
+    const vagabundos = groupMetadata.participants
+      .filter(p => {
+        if (p.admin) return false;
+        const numero = normalizarNumero(p.id.split('@')[0]);
+        return usuarios.some(u => normalizarNumero(u.whatsapp_number) === numero);
+      });
+    
+    let preview = '🔍 PREVIEW - Seriam removidos:\n\n';
+    vagabundos.forEach((v, i) => {
+      const numero = v.id.split('@')[0];
+      const dados = usuarios.find(u => normalizarNumero(u.whatsapp_number) === normalizarNumero(numero));
+      preview += `${i+1}. ${numero} - ${dados?.total_cervejas || 0} cervejas\n`;
+    });
+    preview += `\nTotal: ${vagabundos.length} usuários`;
+    
+    await sock.sendMessage(msg.key.remoteJid, { text: preview });
+  }
+});
+</pre>
+                </div>
+
+                <div class="step">
+                    <h3><span class="step-number">2</span>Configurar Número Admin</h3>
+                    <p>Na linha que diz:</p>
+                    <pre>const NUMERO_ADMIN = '5541988888888';</pre>
+                    <p>Substitua pelo <strong>SEU número de WhatsApp</strong> (apenas números, sem + nem
+                        @s.whatsapp.net)</p>
+                </div>
+
+                <div class="step">
+                    <h3><span class="step-number">3</span>Reiniciar o Bot</h3>
+                    <p>Reinicie o processo do bot para carregar o novo código:</p>
+                    <pre>pm2 restart seu-bot
+# ou
+node bot.js</pre>
+                </div>
+            </div>
+
+            <!-- TESTES -->
+            <div class="section">
+                <h2>🧪 Testes de Segurança (OBRIGATÓRIOS)</h2>
+
+                <div class="danger">
+                    <h3>🚨 NUNCA PULE ESTA ETAPA!</h3>
+                    <p>Testar em produção pode banir pessoas erradas e causar confusão no grupo.</p>
+                </div>
+
+                <div class="step">
+                    <h3><span class="step-number">1</span>Criar Grupo de Teste</h3>
+                    <ul class="checklist">
+                        <li>Crie um grupo só com você e 2-3 contatos de confiança</li>
+                        <li>Adicione o bot ao grupo</li>
+                        <li>Torne o bot admin</li>
+                    </ul>
+                </div>
+
+                <div class="step">
+                    <h3><span class="step-number">2</span>Popular Dados de Teste no Supabase</h3>
+                    <p>Adicione registros falsos na tabela <code>cervejas</code>:</p>
+                    <pre>
+INSERT INTO cervejas (whatsapp_number, total_cervejas) VALUES
+('5541999999999', 0),  -- vagabundo
+('5541988888888', 1),  -- vagabundo
+('5541977777777', 10); -- contribuidor
+                    </pre>
+                </div>
+
+                <div class="step">
+                    <h3><span class="step-number">3</span>Executar Preview</h3>
+                    <p>No grupo de teste, envie:</p>
+                    <pre>!testban</pre>
+                    <p>O bot deve mostrar quem SERIA removido, <strong>SEM remover ninguém</strong>.</p>
+
+                    <div class="success">
+                        <h3>✅ Verificar se está correto:</h3>
+                        <ul class="checklist">
+                            <li>Lista mostra apenas quem tem < 2 cervejas</li>
+                            <li>Admins NÃO aparecem na lista</li>
+                            <li>Números estão sendo comparados corretamente</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <h3><span class="step-number">4</span>Executar Ban Real (no teste)</h3>
+                    <p>Só DEPOIS de confirmar que o preview está correto, envie:</p>
+                    <pre>!banvagabundos</pre>
+                    <p>No grupo de teste, o bot deve remover os vagabundos.</p>
+                </div>
+            </div>
+
+            <!-- COMO USAR -->
+            <div class="section">
+                <h2>🎮 Como Usar em Produção</h2>
+
+                <div class="step">
+                    <h3><span class="step-number">1</span>Fazer Preview Primeiro</h3>
+                    <p>Sempre envie no grupo:</p>
+                    <pre>!testban</pre>
+                    <p>Isso mostra quem será removido <strong>SEM remover ninguém</strong>.</p>
+                </div>
+
+                <div class="step">
+                    <h3><span class="step-number">2</span>Avisar o Grupo (Opcional)</h3>
+                    <p>Você pode mandar uma mensagem tipo:</p>
+                    <blockquote style="border-left: 3px solid #667eea; padding-left: 15px; margin: 15px 0;">
+                        "🍺 ATENÇÃO: Em 24h vou remover quem tem menos de 2 cervejas registradas. Contribuam ou caiam
+                        fora! Use !testban para ver se você está na lista."
+                    </blockquote>
+                </div>
+
+                <div class="step">
+                    <h3><span class="step-number">3</span>Executar Ban Massivo</h3>
+                    <p>Quando tiver certeza, envie:</p>
+                    <pre>!banvagabundos</pre>
+                    <p>Ou com threshold customizado:</p>
+                    <pre>!banvagabundos 5</pre>
+                    <p>(Remove quem tem menos de 5 cervejas)</p>
+                </div>
+            </div>
+
+            <!-- PRECAUÇÕES -->
+            <div class="section">
+                <h2>🛡️ Precauções e Cuidados</h2>
+
+                <div class="warning">
+                    <h3>⚠️ Antes de Executar</h3>
+                    <ul class="checklist">
+                        <li>Faça backup dos dados do Supabase</li>
+                        <li>Anote os números que serão removidos (use !testban)</li>
+                        <li>Verifique se não há admins na lista</li>
+                        <li>Confirme que o bot está funcionando normalmente</li>
+                        <li>Certifique-se que o bot é admin do grupo</li>
+                    </ul>
+                </div>
+
+                <div class="danger">
+                    <h3>🚨 Nunca Faça</h3>
+                    <ul>
+                        <li>❌ Executar sem testar antes em grupo de teste</li>
+                        <li>❌ Executar sem verificar o preview (!testban)</li>
+                        <li>❌ Executar se o Supabase estiver com problemas</li>
+                        <li>❌ Executar durante horários de pico do grupo</li>
+                        <li>❌ Dar permissão de admin do bot para outras pessoas</li>
+                    </ul>
+                </div>
+
+                <div class="step">
+                    <h3>📋 Checklist Pré-Execução</h3>
+                    <ul class="checklist">
+                        <li>✅ Testei no grupo de teste?</li>
+                        <li>✅ Executei !testban no grupo real e conferi a lista?</li>
+                        <li>✅ Verifiquei que nenhum admin está na lista?</li>
+                        <li>✅ Tenho como re-adicionar pessoas se necessário?</li>
+                        <li>✅ Avisei o grupo com antecedência?</li>
+                        <li>✅ O Supabase está respondendo normalmente?</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- TROUBLESHOOTING -->
+            <div class="section">
+                <h2>🔍 Resolução de Problemas</h2>
+
+                <table>
+                    <tr>
+                        <th>Problema</th>
+                        <th>Solução</th>
+                    </tr>
+                    <tr>
+                        <td>Bot não responde ao comando</td>
+                        <td>
+                            • Verifique se você é o número admin configurado<br>
+                            • Confirme que o bot está online<br>
+                            • Veja os logs do servidor
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Ninguém foi removido</td>
+                        <td>
+                            • Verifique se bot é admin do grupo<br>
+                            • Confirme que os números no Supabase estão corretos<br>
+                            • Use !testban para ver se alguém seria removido
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Pessoas erradas foram removidas</td>
+                        <td>
+                            • Verifique formato dos números no Supabase<br>
+                            • Confirme que a coluna é total_cervejas<br>
+                            • Re-adicione manualmente as pessoas
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Erro no Supabase</td>
+                        <td>
+                            • Verifique credenciais (URL e Key)<br>
+                            • Confirme que a tabela 'cervejas' existe<br>
+                            • Veja se as colunas estão corretas
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Admin foi removido</td>
+                        <td>
+                            • Bug no código! Isso NÃO deveria acontecer<br>
+                            • Re-adicione o admin imediatamente<br>
+                            • Entre em contato para correção do código
+                        </td>
+                    </tr>
+                </table>
+            </div>
+
+            <!-- COMANDOS -->
+            <div class="section">
+                <h2>⌨️ Lista de Comandos</h2>
+
+                <table>
+                    <tr>
+                        <th>Comando</th>
+                        <th>Descrição</th>
+                        <th>Exemplo</th>
+                    </tr>
+                    <tr>
+                        <td><code>!testban</code></td>
+                        <td>Preview: mostra quem seria removido SEM remover</td>
+                        <td><code>!testban</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>!banvagabundos</code></td>
+                        <td>Remove quem tem menos de 2 cervejas</td>
+                        <td><code>!banvagabundos</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>!banvagabundos [número]</code></td>
+                        <td>Remove quem tem menos de X cervejas</td>
+                        <td><code>!banvagabundos 5</code></td>
+                    </tr>
+                </table>
+
+                <div class="warning">
+                    <h3>⚠️ Apenas o Admin Pode Usar</h3>
+                    <p>Somente o número configurado em <code>NUMERO_ADMIN</code> pode executar esses comandos. Outros
+                        membros verão os comandos sendo ignorados.</p>
+                </div>
+            </div>
+
+            <!-- MELHORIAS FUTURAS -->
+            <div class="section">
+                <h2>🚀 Melhorias Futuras (Opcionais)</h2>
+
+                <div class="step">
+                    <h3><span class="badge badge-optional">Opcional</span> Whitelist de Fundadores</h3>
+                    <p>Proteger fundadores mesmo se tiverem poucas cervejas:</p>
+                    <pre>
+const FUNDADORES = ['5541999999999', '5541988888888'];
+
+// No filtro, adicione:
+if (FUNDADORES.includes(normalizarNumero(numero))) {
+  console.log(`⭐ Fundador protegido: ${numero}`);
+  return false;
+}
+</pre>
+                </div>
+
+                <div class="step">
+                    <h3><span class="badge badge-optional">Opcional</span> Log de Remoções</h3>
+                    <p>Salvar no Supabase quem foi removido e quando:</p>
+                    <pre>
+// Criar tabela: ban_logs (id, whatsapp_number, removed_at, reason)
+
+await supabase.from('ban_logs').insert(
+  vagabundos.map(v => ({
+    whatsapp_number: v.split('@')[0],
+    removed_at: new Date().toISOString(),
+    reason: `Menos de ${minCervejas} cervejas`
+  }))
+);
+</pre>
+                </div>
+
+                <div class="step">
+                    <h3><span class="badge badge-optional">Opcional</span> Aviso Automático por DM</h3>
+                    <p>Avisar cada pessoa antes de remover:</p>
+                    <pre>
+// Enviar DM 24h antes
+for (const numero of vagabundos) {
+  await sock.sendMessage(numero, {
+    text: '⚠️ Você tem menos de 2 cervejas registradas. ' +
+          'Contribua nas próximas 24h ou será removido!'
+  });
+}
+</pre>
+                </div>
+            </div>
+
+            <!-- CÓDIGO FINAL -->
+            <div class="section">
+                <h2>💾 Backup do Código Completo</h2>
+                <p>Código final corrigido e testado:</p>
+                <div class="success">
+                    <p>✅ Proteção de admins ativa</p>
+                    <p>✅ Normalização de números robusta</p>
+                    <p>✅ Tratamento de erros do Baileys</p>
+                    <p>✅ Comando de preview incluído</p>
+                    <p>✅ Threshold configurável</p>
+                </div>
+                <p style="margin-top: 15px;">
+                    <a href="#" style="color: #667eea; text-decoration: none; font-weight: bold;">
+                        📥 O código completo está na seção "Passo a Passo - Instalação" acima
+                    </a>
+                </p>
+            </div>
+
+        </div>
+
+        <div class="footer">
+            <p><strong>Grupo 1 Milhão de Cervejas 🍺</strong></p>
+            <p>Desenvolvido para manter o grupo ativo e engajado</p>
+            <p style="margin-top: 15px; font-size: 0.9em;">
+                <span class="badge badge-critical">CRÍTICO</span> Sempre teste antes de usar em produção
+            </p>
+            <p style="margin-top: 10px; font-size: 0.85em; opacity: 0.7;">
+                Última atualização: Fevereiro 2026
+            </p>
+        </div>
+    </div>
+</body>
+
+</html>
