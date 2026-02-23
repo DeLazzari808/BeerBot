@@ -21,6 +21,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.90.1",
     "@whiskeysockets/baileys": "7.0.0-rc.6",
+    "baileys": "github:WhiskeySockets/Baileys",
     "better-sqlite3": "^12.6.0",
     "dotenv": "^17.2.3",
     "pino": "^10.1.1",
