@@ -178,53 +178,39 @@ export async function connectWhatsApp(): Promise<WASocket> {
             resetReconnectAttempts();
             logger.info({ event: 'whatsapp_connected' });
 
-            // Pré-carrega metadata do grupo e remove participantes @lid
-            // para evitar crash de criptografia na primeira mensagem enviada
+            // Pré-carrega metadata do grupo para envio de mensagens
+            // Para grupos LID: manter addressingMode original ('lid') mas com
+            // participants vazio para evitar que getUSyncDevices tente resolver
+            // JIDs @lid (que causa crash 1006). O servidor WhatsApp roteia as
+            // mensagens para todos os membros internamente em grupos LID.
             if (config.groupId && sock) {
                 const currentSock = sock;
                 setTimeout(async () => {
                     try {
                         const metadata = await currentSock.groupMetadata(config.groupId!);
-                        // Remove participantes @lid — Baileys não consegue resolver
-                        // chaves Signal para @lid, causando crash 1006 ao enviar
-                        const filtered = {
+                        const isLidGroup = metadata.addressingMode === 'lid';
+
+                        const cached = {
                             ...metadata,
-                            // Forçar 'pn' faz Baileys codificar senderKeyJids como @s.whatsapp.net
-                            // (em vez de @lid) ao chamar assertSessions — formato que o servidor aceita
-                            addressingMode: 'pn' as const,
-                            // MANTER todos os participantes (não filtrar @lid)
-                            // Baileys normaliza @lid → @s.whatsapp.net internamente em getUSyncDevices
-                            participants: metadata.participants,
+                            // MANTER addressingMode original — WhatsApp rejeita mensagens
+                            // com addressing_mode errado (silenciosamente, causando timeout)
+                            // Para grupos 'lid', o valor PRECISA ser 'lid'
+                            // Para grupos 'pn', o valor PRECISA ser 'pn'
+
+                            // Se for grupo LID, esvaziar participantes para evitar que
+                            // getUSyncDevices seja chamado com JIDs @lid (que não são
+                            // números de telefone e crasham o USyncQuery).
+                            // O servidor WhatsApp cuida do roteamento em grupos LID.
+                            participants: isLidGroup ? [] : metadata.participants,
                         };
-                        groupMetadataCache.set(config.groupId!, filtered);
+                        groupMetadataCache.set(config.groupId!, cached);
                         logger.info({
                             event: 'group_metadata_cached',
                             total: metadata.participants.length,
-                            afterFilter: filtered.participants.length,
+                            cachedParticipants: cached.participants.length,
                             addressingMode: metadata.addressingMode,
+                            isLidGroup,
                         });
-
-                        // Para grupos @lid, o app do celular já distribuiu as sender keys
-                        // durante o processo de vincular via QR Code.
-                        // Pré-preencher o sender-key-memory diz ao Baileys que não precisa
-                        // redistribuir as chaves, evitando o timeout de getUSyncDevices.
-                        if (metadata.addressingMode === 'lid') {
-                            const senderKeyMap: Record<string, boolean> = {};
-                            for (const p of metadata.participants) {
-                                // Marcar com o JID @lid original
-                                senderKeyMap[p.id] = true;
-                                // Também marcar com a versão @s.whatsapp.net normalizada
-                                // (usada quando addressingMode é sobrescrito para 'pn')
-                                senderKeyMap[p.id.replace('@lid', '@s.whatsapp.net')] = true;
-                            }
-                            await currentSock.authState.keys.set({
-                                'sender-key-memory': { [config.groupId!]: senderKeyMap },
-                            });
-                            logger.info({
-                                event: 'sender_key_memory_prefilled',
-                                count: metadata.participants.length,
-                            });
-                        }
                     } catch (err) {
                         logger.warn({ event: 'group_metadata_prefetch_failed', error: String(err) });
                     }
