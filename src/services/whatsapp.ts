@@ -203,6 +203,28 @@ export async function connectWhatsApp(): Promise<WASocket> {
                             afterFilter: filtered.participants.length,
                             addressingMode: metadata.addressingMode,
                         });
+
+                        // Para grupos @lid, o app do celular já distribuiu as sender keys
+                        // durante o processo de vincular via QR Code.
+                        // Pré-preencher o sender-key-memory diz ao Baileys que não precisa
+                        // redistribuir as chaves, evitando o timeout de getUSyncDevices.
+                        if (metadata.addressingMode === 'lid') {
+                            const senderKeyMap: Record<string, boolean> = {};
+                            for (const p of metadata.participants) {
+                                // Marcar com o JID @lid original
+                                senderKeyMap[p.id] = true;
+                                // Também marcar com a versão @s.whatsapp.net normalizada
+                                // (usada quando addressingMode é sobrescrito para 'pn')
+                                senderKeyMap[p.id.replace('@lid', '@s.whatsapp.net')] = true;
+                            }
+                            await currentSock.authState.keys.set({
+                                'sender-key-memory': { [config.groupId!]: senderKeyMap },
+                            });
+                            logger.info({
+                                event: 'sender_key_memory_prefilled',
+                                count: metadata.participants.length,
+                            });
+                        }
                     } catch (err) {
                         logger.warn({ event: 'group_metadata_prefetch_failed', error: String(err) });
                     }
