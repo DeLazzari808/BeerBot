@@ -27,6 +27,18 @@ let reconnectAttempts = 0;
 let consecutive428Count = 0;
 let lastConnectionOpenTime = 0;
 
+// JID do remetente atual para fallback DM em grupos LID.
+// Setado pelo message handler antes de processar cada mensagem.
+let currentFallbackJid: string | null = null;
+
+/**
+ * Define o JID de fallback para DM quando envio ao grupo falhar.
+ * Deve ser chamado pelo handler antes de processar cada mensagem.
+ */
+export function setFallbackJid(jid: string | null): void {
+    currentFallbackJid = jid;
+}
+
 // Constantes para controle de 428
 const STABLE_CONNECTION_THRESHOLD_MS = 30_000; // 30s para considerar conexão estável
 const ERROR_428_BASE_DELAY_MS = 30_000; // 30s de delay base para 428
@@ -282,13 +294,55 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
     throw new Error('Max retries exceeded');
 }
 
+// =====================================================================
+// Grupos LID: Baileys NÃO consegue enviar mensagens para grupos com
+// addressingMode 'lid' (USyncQuery não suporta JIDs @lid — feature
+// incompleta do Baileys). O bot RECEBE mensagens normalmente, mas
+// enviar para o grupo causa crash 1006 ou 428.
+//
+// Solução: tentar enviar para o grupo; se falhar, enviar DM para o
+// remetente do comando. DMs usam criptografia pairwise (Signal),
+// diferente de sender key (grupo), e funcionam com @lid.
+// =====================================================================
+
 /**
- * Envia mensagem de texto
+ * Envia mensagem de texto. Se falhar, tenta enviar DM para fallbackJid.
  */
-export async function sendMessage(jid: string, text: string): Promise<void> {
+export async function sendMessage(
+    jid: string,
+    text: string,
+    fallbackJid?: string,
+): Promise<void> {
     if (!sock) throw new Error('Socket não conectado');
-    logger.debug({ event: 'message_sent', jid, textLength: text.length });
-    await withRetry(() => sock!.sendMessage(jid, { text }));
+
+    try {
+        await withRetry(() => sock!.sendMessage(jid, { text }));
+        logger.debug({ event: 'message_sent', jid, textLength: text.length });
+    } catch (error: any) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        logger.warn({ event: 'group_send_failed', jid, error: errMsg });
+
+        // Fallback: DM para o remetente
+        const dmJid = fallbackJid || currentFallbackJid;
+        if (dmJid && dmJid !== jid) {
+            try {
+                await sock!.sendMessage(dmJid, {
+                    text: `[BeerBot 🍺]\n\n${text}`,
+                });
+                logger.info({
+                    event: 'dm_fallback_sent',
+                    originalJid: jid,
+                    fallbackJid: dmJid,
+                });
+            } catch (dmError: any) {
+                logger.error({
+                    event: 'dm_fallback_failed',
+                    fallbackJid: dmJid,
+                    error: dmError instanceof Error ? dmError.message : String(dmError),
+                });
+            }
+        }
+    }
 }
 
 /**
@@ -297,21 +351,45 @@ export async function sendMessage(jid: string, text: string): Promise<void> {
 export async function replyToMessage(
     jid: string,
     text: string,
-    quotedMessage: proto.IWebMessageInfo
+    quotedMessage: proto.IWebMessageInfo,
+    fallbackJid?: string,
 ): Promise<void> {
     if (!sock) throw new Error('Socket não conectado');
-    logger.debug({ event: 'reply_sent', jid, textLength: text.length });
 
-    // SAFEGUARD: Em Baileys rc.6 as respostas a destinatários @lid corrompem a sessão
-    // Se o remetente for @lid, envia apenas texto normal sem citar a mensagem
-    const participant = quotedMessage.key?.participant || quotedMessage.key?.remoteJid || '';
-    if (participant.includes('@lid')) {
-        logger.warn({ event: 'reply_to_lid_fallback', participant });
-        await withRetry(() => sock!.sendMessage(jid, { text }));
-        return;
+    try {
+        // Para participantes @lid, não usar quoted (corrompe sessão)
+        const participant = quotedMessage.key?.participant || quotedMessage.key?.remoteJid || '';
+        if (participant.includes('@lid')) {
+            await withRetry(() => sock!.sendMessage(jid, { text }));
+        } else {
+            await withRetry(() => sock!.sendMessage(jid, { text }, { quoted: quotedMessage as any }));
+        }
+        logger.debug({ event: 'reply_sent', jid, textLength: text.length });
+    } catch (error: any) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        logger.warn({ event: 'group_reply_failed', jid, error: errMsg });
+
+        // Fallback: DM para o remetente
+        const dmJid = fallbackJid || quotedMessage.key?.participant || '';
+        if (dmJid && dmJid !== jid) {
+            try {
+                await sock!.sendMessage(dmJid, {
+                    text: `[BeerBot 🍺]\n\n${text}`,
+                });
+                logger.info({
+                    event: 'dm_fallback_sent',
+                    originalJid: jid,
+                    fallbackJid: dmJid,
+                });
+            } catch (dmError: any) {
+                logger.error({
+                    event: 'dm_fallback_failed',
+                    fallbackJid: dmJid,
+                    error: dmError instanceof Error ? dmError.message : String(dmError),
+                });
+            }
+        }
     }
-
-    await withRetry(() => sock!.sendMessage(jid, { text }, { quoted: quotedMessage as any }));
 }
 
 /**
@@ -323,19 +401,24 @@ export async function reactToMessage(
     emoji: string
 ): Promise<void> {
     if (!sock) throw new Error('Socket não conectado');
-    logger.debug({ event: 'reaction_sent', jid, emoji });
 
-    // SAFEGUARD: Reagir a destinatários @lid também pode corromper a conexão
-    const participant = messageKey.participant || messageKey.remoteJid || '';
-    if (participant.includes('@lid')) {
-        logger.warn({ event: 'react_to_lid_skipped', participant });
-        return; // Não reage para evitar crash
+    // Silenciosamente ignora reações em grupos LID (sempre causam crash)
+    try {
+        await withRetry(() => sock!.sendMessage(jid, {
+            react: {
+                text: emoji,
+                key: messageKey,
+            },
+        }));
+        logger.debug({ event: 'reaction_sent', jid, emoji });
+    } catch (error: any) {
+        // Reações falhando não devem impedir o fluxo
+        logger.warn({
+            event: 'reaction_failed',
+            jid,
+            emoji,
+            error: error instanceof Error ? error.message : String(error),
+        });
     }
-
-    await withRetry(() => sock!.sendMessage(jid, {
-        react: {
-            text: emoji,
-            key: messageKey,
-        },
-    }));
 }
+

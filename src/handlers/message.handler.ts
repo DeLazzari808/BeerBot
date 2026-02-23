@@ -2,7 +2,7 @@ import { proto } from '@whiskeysockets/baileys';
 import { config } from '../config/env.js';
 import { parseCountFromMessage } from '../core/parser.js';
 import { counterService } from '../core/counter.js';
-import { reactToMessage, replyToMessage } from '../services/whatsapp.js';
+import { reactToMessage, replyToMessage, setFallbackJid } from '../services/whatsapp.js';
 import { logger } from '../utils/logger.js';
 import { handleCommand } from './command.handler.js';
 import { messageQueue } from '../utils/queue.js';
@@ -92,9 +92,14 @@ export async function handleMessage(message: proto.IWebMessageInfo): Promise<voi
 
     const senderName = getSenderName(message);
 
+    // Define o JID do remetente como fallback para DMs
+    // Se o envio para o grupo LID falhar, o bot tenta enviar DM
+    setFallbackJid(senderId);
+
     // Verifica se é um comando
     if (text?.startsWith('/')) {
         await handleCommand(message, text, senderId, senderName, jid);
+        setFallbackJid(null); // Limpa depois do processamento
         return;
     }
 
