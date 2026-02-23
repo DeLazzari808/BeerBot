@@ -127,26 +127,8 @@ export async function connectWhatsApp(): Promise<WASocket> {
         },
     });
 
-    // Código de pareamento (alternativa ao QR Code)
-    if (!sock.authState.creds.registered) {
-        // Pega o número de telefone do env (se existir)
-        const phoneNumber = process.env.BOT_PHONE_NUMBER?.replace(/[^0-9]/g, '');
-        if (phoneNumber) {
-            setTimeout(async () => {
-                try {
-                    const code = await sock!.requestPairingCode(phoneNumber);
-                    console.log(`\n========================================`);
-                    console.log(`CÓDIGO DE PAREAMENTO: ${code}`);
-                    console.log(`Use este código no seu WhatsApp para conectar.`);
-                    console.log(`========================================\n`);
-                    logger.info({ event: 'pairing_code_generated', code });
-                } catch (error) {
-                    logger.error({ event: 'pairing_code_error', error });
-                    console.error('Erro ao gerar código de pareamento:', error);
-                }
-            }, 3000);
-        }
-    }
+    // QR Code é exibido via connection.update (abaixo)
+    // Autenticação via Web Client (completa) — necessária para sincronizar chaves de grupos
 
     // Salva credenciais quando atualizadas
     sock.ev.on('creds.update', saveCreds);
