@@ -63,6 +63,11 @@ export async function connectWhatsApp(): Promise<WASocket> {
         auth: state,
         logger: baileyLogger,
         browser: ['BeerBot', 'Chrome', '1.0.0'],
+        syncFullHistory: false,
+        markOnlineOnConnect: false,
+        connectTimeoutMs: 60_000,
+        keepAliveIntervalMs: 30_000,
+        retryRequestDelayMs: 500,
     });
 
     // Salva credenciais quando atualizadas
@@ -165,12 +170,33 @@ export function getSocket(): WASocket | null {
 }
 
 /**
+ * Retry com backoff para erros 428 (Precondition Required)
+ */
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            return await fn();
+        } catch (error: any) {
+            const statusCode = error?.output?.statusCode || error?.statusCode;
+            if (statusCode === 428 && i < maxRetries - 1) {
+                const delay = (i + 1) * 2000;
+                logger.warn({ event: 'retry_after_428', attempt: i + 1, delayMs: delay });
+                await new Promise(r => setTimeout(r, delay));
+                continue;
+            }
+            throw error;
+        }
+    }
+    throw new Error('Max retries exceeded');
+}
+
+/**
  * Envia mensagem de texto
  */
 export async function sendMessage(jid: string, text: string): Promise<void> {
     if (!sock) throw new Error('Socket não conectado');
     logger.debug({ event: 'message_sent', jid, textLength: text.length });
-    await sock.sendMessage(jid, { text });
+    await withRetry(() => sock!.sendMessage(jid, { text }));
 }
 
 /**
@@ -183,7 +209,7 @@ export async function replyToMessage(
 ): Promise<void> {
     if (!sock) throw new Error('Socket não conectado');
     logger.debug({ event: 'reply_sent', jid, textLength: text.length });
-    await sock.sendMessage(jid, { text }, { quoted: quotedMessage as any });
+    await withRetry(() => sock!.sendMessage(jid, { text }, { quoted: quotedMessage as any }));
 }
 
 /**
@@ -196,10 +222,10 @@ export async function reactToMessage(
 ): Promise<void> {
     if (!sock) throw new Error('Socket não conectado');
     logger.debug({ event: 'reaction_sent', jid, emoji });
-    await sock.sendMessage(jid, {
+    await withRetry(() => sock!.sendMessage(jid, {
         react: {
             text: emoji,
             key: messageKey,
         },
-    });
+    }));
 }
