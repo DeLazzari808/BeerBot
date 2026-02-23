@@ -1,13 +1,23 @@
 /**
  * Patch Baileys messages-send.js to fix @lid group message crash (1006).
  *
- * Bug: getUSyncDevices() calls `new USyncUser().withId(jid)` for ALL JIDs,
- * but for @lid JIDs, USyncLIDProtocol.getUserElement() checks `user.lid`
- * (not `user.id`). Without `user.lid`, the <user> XML node is sent with
- * `jid="xxx@lid"` but NO <lid> child element → WhatsApp rejects with 1006.
+ * Bug: getUSyncDevices() calls `new USyncUser().withId(jid)` for ALL JIDs.
+ * For @lid JIDs, this produces:
+ *   <user jid="xxx@lid">
+ *     <devices version="2"/>
+ *   </user>
  *
- * Fix: For @lid JIDs, also call `.withLid(jid)` so the USyncLIDProtocol
- * generates the proper `<lid jid="xxx@lid"/>` child element.
+ * WhatsApp rejects jid="xxx@lid" in the <user> element → 1006.
+ *
+ * Fix: For @lid JIDs, use ONLY withLid() (NOT withId()). This produces:
+ *   <user>
+ *     <devices version="2"/>
+ *     <lid jid="xxx@lid"/>
+ *   </user>
+ *
+ * The <user> element has no jid attribute (user.id is undefined),
+ * and the <lid> child element carries the LID JID — the format
+ * WhatsApp expects for LID device queries.
  */
 import { readFileSync, writeFileSync } from 'fs';
 import { resolve, dirname } from 'path';
@@ -21,31 +31,50 @@ const filePath = resolve(
 
 const original = readFileSync(filePath, 'utf8');
 
-// The buggy line:
-//   query.withUser(new USyncUser().withId(jid));
-// Should be:
-//   const u = new USyncUser().withId(jid);
-//   if (isLidUser(jid)) u.withLid(jid);
-//   query.withUser(u);
-
-const buggyLine =
-    'query.withUser(new USyncUser().withId(jid));';
-
-const fixedCode = `{
+// Match the line (may already have a previous patch applied)
+const buggyPatterns = [
+    // Original unpatched line:
+    'query.withUser(new USyncUser().withId(jid));',
+    // Previous patch v1 (withId + withLid):
+    `{
                 const u = new USyncUser().withId(jid);
                 if (isLidUser(jid)) u.withLid(jid);
                 query.withUser(u);
+            }`,
+];
+
+const fixedCode = `{
+                // PATCH: For @lid JIDs, use withLid() only (no withId).
+                // This makes <user> have no jid attr, with <lid jid="xxx@lid"/> child.
+                // For regular JIDs, use withId() as normal.
+                if (isLidUser(jid)) {
+                    query.withUser(new USyncUser().withLid(jid));
+                } else {
+                    query.withUser(new USyncUser().withId(jid));
+                }
             }`;
 
-if (!original.includes(buggyLine)) {
-    if (original.includes('if (isLidUser(jid)) u.withLid(jid)')) {
-        console.log('[patch-baileys] Already patched — skipping.');
-        process.exit(0);
+// Check if already patched with v2
+if (original.includes('use withLid() only (no withId)')) {
+    console.log('[patch-baileys] Already patched v2 — skipping.');
+    process.exit(0);
+}
+
+let patched = original;
+let found = false;
+for (const pattern of buggyPatterns) {
+    if (patched.includes(pattern)) {
+        patched = patched.replace(pattern, fixedCode);
+        found = true;
+        break;
     }
+}
+
+if (!found) {
     console.error('[patch-baileys] Could not find target line to patch!');
+    console.error('[patch-baileys] Searched for patterns:', buggyPatterns.map(p => p.substring(0, 50)));
     process.exit(1);
 }
 
-const patched = original.replace(buggyLine, fixedCode);
 writeFileSync(filePath, patched, 'utf8');
-console.log('[patch-baileys] ✅ Patched getUSyncDevices to use withLid() for @lid JIDs');
+console.log('[patch-baileys] ✅ v2: withLid() only for @lid JIDs (no withId)');
