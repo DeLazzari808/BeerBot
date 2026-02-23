@@ -4,7 +4,8 @@ import makeWASocket, {
     WASocket,
     proto,
     WAMessageKey,
-    fetchLatestBaileysVersion, // Adicionado para buscar a última versão do WA Web
+    GroupMetadata,
+    fetchLatestBaileysVersion,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import fs from 'fs';
@@ -15,6 +16,11 @@ import {
     WHATSAPP_RECONNECT_BASE_DELAY_MS,
     WHATSAPP_RECONNECT_MAX_DELAY_MS,
 } from '../config/constants.js';
+
+// Cache de metadados de grupo com participantes @lid removidos
+// Impede que Baileys tente resolver chaves de criptografia para dispositivos @lid,
+// que causa um crash 1006 no WebSocket ao enviar mensagens para o grupo.
+const groupMetadataCache = new Map<string, GroupMetadata>();
 
 let sock: WASocket | null = null;
 let reconnectAttempts = 0;
@@ -113,13 +119,17 @@ export async function connectWhatsApp(): Promise<WASocket> {
         version,
         auth: state,
         logger: baileyLogger,
-        browser: ['Mac OS', 'Chrome', '1.0.0'], // "BeerBot" name sometimes gets flagged
+        browser: ['Mac OS', 'Chrome', '1.0.0'],
         syncFullHistory: false,
         markOnlineOnConnect: false,
         connectTimeoutMs: 60_000,
         keepAliveIntervalMs: 30_000,
         retryRequestDelayMs: 500,
         generateHighQualityLinkPreview: false,
+        // Fornece metadata de grupo pré-filtrada, sem participantes @lid
+        // Isso evita que Baileys passe JIDs @lid para o USyncQuery,
+        // que causava um crash 1006 ao tentar resolver chaves de criptografia
+        cachedGroupMetadata: async (jid) => groupMetadataCache.get(jid),
         getMessage: async (key) => {
             return {
                 conversation: '...',
@@ -167,6 +177,35 @@ export async function connectWhatsApp(): Promise<WASocket> {
         } else if (connection === 'open') {
             resetReconnectAttempts();
             logger.info({ event: 'whatsapp_connected' });
+
+            // Pré-carrega metadata do grupo e remove participantes @lid
+            // para evitar crash de criptografia na primeira mensagem enviada
+            if (config.groupId && sock) {
+                const currentSock = sock;
+                setTimeout(async () => {
+                    try {
+                        const metadata = await currentSock.groupMetadata(config.groupId!);
+                        // Remove participantes @lid — Baileys não consegue resolver
+                        // chaves Signal para @lid, causando crash 1006 ao enviar
+                        const filtered = {
+                            ...metadata,
+                            addressingMode: 'pn' as const,
+                            participants: metadata.participants.filter(
+                                p => !p.id.includes('@lid')
+                            ),
+                        };
+                        groupMetadataCache.set(config.groupId!, filtered);
+                        logger.info({
+                            event: 'group_metadata_cached',
+                            total: metadata.participants.length,
+                            afterFilter: filtered.participants.length,
+                            addressingMode: metadata.addressingMode,
+                        });
+                    } catch (err) {
+                        logger.warn({ event: 'group_metadata_prefetch_failed', error: String(err) });
+                    }
+                }, 3000);
+            }
         }
     });
 
