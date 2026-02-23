@@ -109,12 +109,18 @@ export async function connectWhatsApp(): Promise<WASocket> {
     sock = makeWASocket({
         auth: state,
         logger: baileyLogger,
-        browser: ['BeerBot', 'Chrome', '1.0.0'],
+        browser: ['Mac OS', 'Chrome', '1.0.0'], // "BeerBot" name sometimes gets flagged
         syncFullHistory: false,
         markOnlineOnConnect: false,
         connectTimeoutMs: 60_000,
         keepAliveIntervalMs: 30_000,
         retryRequestDelayMs: 500,
+        generateHighQualityLinkPreview: false,
+        getMessage: async (key) => {
+            return {
+                conversation: '...',
+            };
+        },
     });
 
     // Salva credenciais quando atualizadas
