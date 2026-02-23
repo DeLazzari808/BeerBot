@@ -17,6 +17,15 @@ import {
 
 let sock: WASocket | null = null;
 let reconnectAttempts = 0;
+let consecutive428Count = 0;
+let lastConnectionOpenTime = 0;
+
+// Constantes para controle de 428
+const STABLE_CONNECTION_THRESHOLD_MS = 30_000; // 30s para considerar conexão estável
+const ERROR_428_BASE_DELAY_MS = 30_000; // 30s de delay base para 428
+const ERROR_428_MAX_DELAY_MS = 5 * 60_000; // 5 min de delay máximo para 428
+const ERROR_428_COOLDOWN_THRESHOLD = 5; // Após 5 428s consecutivos, entra em cooldown
+const ERROR_428_COOLDOWN_MS = 10 * 60_000; // 10 min de cooldown
 
 export type MessageHandler = (message: proto.IWebMessageInfo) => Promise<void>;
 export type DeleteHandler = (messageId: string, jid: string) => Promise<void>;
@@ -35,7 +44,31 @@ export function setDeleteHandler(handler: DeleteHandler): void {
 /**
  * Calcula delay de reconexão com backoff exponencial
  */
-function getReconnectDelay(): number {
+function getReconnectDelay(reason?: number): number {
+    // Tratamento especial para erro 428
+    if (reason === 428) {
+        consecutive428Count++;
+
+        // Após muitas tentativas 428, entra em cooldown longo
+        if (consecutive428Count >= ERROR_428_COOLDOWN_THRESHOLD) {
+            logger.error({
+                event: 'whatsapp_428_cooldown',
+                consecutive428Count,
+                cooldownMs: ERROR_428_COOLDOWN_MS,
+            });
+            console.log(`\n⏳ Muitos erros 428 consecutivos (${consecutive428Count}x). Aguardando ${ERROR_428_COOLDOWN_MS / 60_000} minutos antes de reconectar...\n`);
+            return ERROR_428_COOLDOWN_MS;
+        }
+
+        // Backoff progressivo para 428: 30s, 60s, 120s, 240s, max 5min
+        const delay = Math.min(
+            ERROR_428_BASE_DELAY_MS * Math.pow(2, consecutive428Count - 1),
+            ERROR_428_MAX_DELAY_MS
+        );
+        return delay;
+    }
+
+    // Para outros erros, usa o backoff normal
     const delay = Math.min(
         WHATSAPP_RECONNECT_BASE_DELAY_MS * Math.pow(2, reconnectAttempts),
         WHATSAPP_RECONNECT_MAX_DELAY_MS
@@ -45,10 +78,24 @@ function getReconnectDelay(): number {
 }
 
 /**
- * Reseta contador de reconexão após conexão bem-sucedida
+ * Reseta contadores apenas se a conexão foi estável (30+ segundos)
  */
 function resetReconnectAttempts(): void {
-    reconnectAttempts = 0;
+    const now = Date.now();
+    const connectionDuration = lastConnectionOpenTime > 0 ? now - lastConnectionOpenTime : 0;
+
+    if (connectionDuration >= STABLE_CONNECTION_THRESHOLD_MS || lastConnectionOpenTime === 0) {
+        reconnectAttempts = 0;
+        consecutive428Count = 0;
+        if (lastConnectionOpenTime > 0) {
+            logger.info({
+                event: 'connection_stabilized',
+                durationMs: connectionDuration,
+            });
+        }
+    }
+
+    lastConnectionOpenTime = now;
 }
 
 export async function connectWhatsApp(): Promise<WASocket> {
@@ -91,13 +138,15 @@ export async function connectWhatsApp(): Promise<WASocket> {
                 fs.rmSync(config.paths.auth, { recursive: true, force: true });
                 process.exit(1);
             } else {
-                const delay = getReconnectDelay();
+                const delay = getReconnectDelay(reason);
                 logger.warn({
                     event: 'whatsapp_disconnected',
                     reason,
                     reconnectAttempt: reconnectAttempts,
+                    consecutive428: consecutive428Count,
                     delayMs: delay,
                 });
+                console.log(`⚠️ Desconectado (reason: ${reason}). Reconectando em ${Math.round(delay / 1000)}s...`);
                 setTimeout(() => {
                     connectWhatsApp();
                 }, delay);
