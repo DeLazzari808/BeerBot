@@ -178,38 +178,19 @@ export async function connectWhatsApp(): Promise<WASocket> {
             resetReconnectAttempts();
             logger.info({ event: 'whatsapp_connected' });
 
-            // Pré-carrega metadata do grupo para envio de mensagens
-            // Para grupos LID: manter addressingMode original ('lid') mas com
-            // participants vazio para evitar que getUSyncDevices tente resolver
-            // JIDs @lid (que causa crash 1006). O servidor WhatsApp roteia as
-            // mensagens para todos os membros internamente em grupos LID.
+            // Pré-carrega metadata do grupo para envio de mensagens.
+            // Baileys 7.0.0-rc.9 tem suporte nativo a grupos LID —
+            // cachear metadata REAL sem modificações.
             if (config.groupId && sock) {
                 const currentSock = sock;
                 setTimeout(async () => {
                     try {
                         const metadata = await currentSock.groupMetadata(config.groupId!);
-                        const isLidGroup = metadata.addressingMode === 'lid';
-
-                        const cached = {
-                            ...metadata,
-                            // MANTER addressingMode original — WhatsApp rejeita mensagens
-                            // com addressing_mode errado (silenciosamente, causando timeout)
-                            // Para grupos 'lid', o valor PRECISA ser 'lid'
-                            // Para grupos 'pn', o valor PRECISA ser 'pn'
-
-                            // Se for grupo LID, esvaziar participantes para evitar que
-                            // getUSyncDevices seja chamado com JIDs @lid (que não são
-                            // números de telefone e crasham o USyncQuery).
-                            // O servidor WhatsApp cuida do roteamento em grupos LID.
-                            participants: isLidGroup ? [] : metadata.participants,
-                        };
-                        groupMetadataCache.set(config.groupId!, cached);
+                        groupMetadataCache.set(config.groupId!, metadata);
                         logger.info({
                             event: 'group_metadata_cached',
                             total: metadata.participants.length,
-                            cachedParticipants: cached.participants.length,
                             addressingMode: metadata.addressingMode,
-                            isLidGroup,
                         });
                     } catch (err) {
                         logger.warn({ event: 'group_metadata_prefetch_failed', error: String(err) });
