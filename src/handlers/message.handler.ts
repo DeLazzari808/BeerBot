@@ -1,4 +1,4 @@
-import { proto } from '@whiskeysockets/baileys';
+import { proto, WAMessageKey } from '@whiskeysockets/baileys';
 import { config } from '../config/env.js';
 import { parseCountFromMessage } from '../core/parser.js';
 import { counterService } from '../core/counter.js';
@@ -92,9 +92,12 @@ export async function handleMessage(message: proto.IWebMessageInfo): Promise<voi
 
     const senderName = getSenderName(message);
 
-    // Define o JID do remetente como fallback para DMs
-    // Se o envio para o grupo LID falhar, o bot tenta enviar DM
-    setFallbackJid(senderId);
+    // Define o JID do remetente como fallback para DMs.
+    // Em grupos LID, participant é @lid (não funciona pra DM).
+    // participantAlt contém o @s.whatsapp.net que funciona.
+    const key = message.key as WAMessageKey;
+    const dmJid = key.participantAlt || senderId;
+    setFallbackJid(dmJid);
 
     // Verifica se é um comando
     if (text?.startsWith('/')) {

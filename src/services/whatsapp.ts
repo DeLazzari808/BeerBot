@@ -346,8 +346,9 @@ function shouldSkipGroupSend(jid: string): boolean {
 }
 
 async function sendDM(dmJid: string, text: string, originalJid: string): Promise<void> {
+    logger.info({ event: 'dm_fallback_attempting', originalJid, dmJid });
     await sock!.sendMessage(dmJid, { text: `[BeerBot 🍺]\n\n${text}` });
-    logger.info({ event: 'dm_fallback_sent', originalJid, fallbackJid: dmJid });
+    logger.info({ event: 'dm_fallback_sent', originalJid, dmJid });
 }
 
 /** Attempts group send; records timestamp for circuit breaker correlation */
@@ -411,7 +412,8 @@ export async function replyToMessage(
 ): Promise<void> {
     if (!sock) throw new Error('Socket não conectado');
 
-    const dmJid = fallbackJid || quotedMessage.key?.participant || currentFallbackJid || '';
+    const qKey = quotedMessage.key as any;
+    const dmJid = fallbackJid || qKey?.participantAlt || currentFallbackJid || '';
 
     if (!shouldSkipGroupSend(jid)) {
         const participant = quotedMessage.key?.participant || quotedMessage.key?.remoteJid || '';
