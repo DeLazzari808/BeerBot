@@ -32,11 +32,33 @@ let lastConnectionOpenTime = 0;
 let currentFallbackJid: string | null = null;
 
 /**
- * Define o JID de fallback para DM quando envio ao grupo falhar.
+ * Define o JID de fallback para DM quando envio ao grupo falher.
  * Deve ser chamado pelo handler antes de processar cada mensagem.
  */
 export function setFallbackJid(jid: string | null): void {
     currentFallbackJid = jid;
+}
+
+// ── Circuit breaker para envios a grupos LID ──
+// Tenta enviar pro grupo normalmente. Se um 428 acontecer logo após
+// um envio, desabilita envios ao grupo por um período (DM-only mode).
+const LID_CIRCUIT_BREAKER_COOLDOWN_MS = 30 * 60_000; // 30 min
+const LID_SEND_CORRELATION_WINDOW_MS = 10_000; // 10s — se 428 vem nesse intervalo, é culpa do send
+let lastLidGroupSendAttempt = 0;
+let lidGroupSendDisabledUntil = 0;
+
+function isLidGroupSendEnabled(): boolean {
+    return Date.now() >= lidGroupSendDisabledUntil;
+}
+
+function tripLidCircuitBreaker(): void {
+    lidGroupSendDisabledUntil = Date.now() + LID_CIRCUIT_BREAKER_COOLDOWN_MS;
+    logger.warn({
+        event: 'lid_circuit_breaker_tripped',
+        disabledForMs: LID_CIRCUIT_BREAKER_COOLDOWN_MS,
+        resumesAt: new Date(lidGroupSendDisabledUntil).toISOString(),
+    });
+    console.log(`⚡ Circuit breaker: envio ao grupo LID desabilitado por ${LID_CIRCUIT_BREAKER_COOLDOWN_MS / 60_000} min (usando DM).`);
 }
 
 // Constantes para controle de 428
@@ -142,10 +164,11 @@ export async function connectWhatsApp(): Promise<WASocket> {
         // Isso evita que Baileys passe JIDs @lid para o USyncQuery,
         // que causava um crash 1006 ao tentar resolver chaves de criptografia
         cachedGroupMetadata: async (jid) => groupMetadataCache.get(jid),
-        getMessage: async (key) => {
-            return {
-                conversation: '...',
-            };
+        getMessage: async (_key) => {
+            // Return undefined — we have no message store.
+            // Returning fake data here causes session corruption when
+            // WhatsApp requests SKDM retries for LID participants.
+            return undefined;
         },
     });
 
@@ -173,6 +196,12 @@ export async function connectWhatsApp(): Promise<WASocket> {
                 fs.rmSync(config.paths.auth, { recursive: true, force: true });
                 process.exit(1);
             } else {
+                // If a 428 happened right after a LID group send, trip the circuit breaker
+                if (reason === 428 && lastLidGroupSendAttempt > 0
+                    && Date.now() - lastLidGroupSendAttempt < LID_SEND_CORRELATION_WINDOW_MS) {
+                    tripLidCircuitBreaker();
+                }
+
                 const delay = getReconnectDelay(reason);
                 logger.warn({
                     event: 'whatsapp_disconnected',
@@ -295,18 +324,50 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
 }
 
 // =====================================================================
-// Grupos LID: Baileys NÃO consegue enviar mensagens para grupos com
-// addressingMode 'lid' (USyncQuery não suporta JIDs @lid — feature
-// incompleta do Baileys). O bot RECEBE mensagens normalmente, mas
-// enviar para o grupo causa crash 1006 ou 428.
+// Grupos LID + Circuit Breaker
 //
-// Solução: tentar enviar para o grupo; se falhar, enviar DM para o
-// remetente do comando. DMs usam criptografia pairwise (Signal),
-// diferente de sender key (grupo), e funcionam com @lid.
+// O Baileys master tem fixes de identity-key-change + LID mapping,
+// então o envio ao grupo PODE funcionar. O circuit breaker testa:
+//   1) Tenta enviar pro grupo normalmente
+//   2) Se 428 chegar em < 10s → desabilita envios ao grupo por 30 min
+//   3) Usa DM fallback enquanto circuit breaker estiver ativo
+//   4) Após 30 min → tenta de novo (identity handler pode ter corrigido)
 // =====================================================================
 
+function isLidGroup(jid: string): boolean {
+    if (!jid.endsWith('@g.us')) return false;
+    const metadata = groupMetadataCache.get(jid);
+    return metadata?.addressingMode === 'lid';
+}
+
+/** Whether to attempt sending to this group or go straight to DM */
+function shouldSkipGroupSend(jid: string): boolean {
+    return isLidGroup(jid) && !isLidGroupSendEnabled();
+}
+
+async function sendDM(dmJid: string, text: string, originalJid: string): Promise<void> {
+    await sock!.sendMessage(dmJid, { text: `[BeerBot 🍺]\n\n${text}` });
+    logger.info({ event: 'dm_fallback_sent', originalJid, fallbackJid: dmJid });
+}
+
+/** Attempts group send; records timestamp for circuit breaker correlation */
+async function tryGroupSend(jid: string, fn: () => Promise<unknown>): Promise<boolean> {
+    if (isLidGroup(jid)) {
+        lastLidGroupSendAttempt = Date.now();
+    }
+    try {
+        await fn();
+        return true;
+    } catch (error: any) {
+        logger.warn({ event: 'group_send_failed', jid, error: String(error) });
+        return false;
+    }
+}
+
 /**
- * Envia mensagem de texto. Se falhar, tenta enviar DM para fallbackJid.
+ * Envia mensagem de texto.
+ * - Se circuit breaker estiver ativo → DM direto
+ * - Senão → tenta grupo, DM fallback se falhar
  */
 export async function sendMessage(
     jid: string,
@@ -315,38 +376,32 @@ export async function sendMessage(
 ): Promise<void> {
     if (!sock) throw new Error('Socket não conectado');
 
-    try {
-        await withRetry(() => sock!.sendMessage(jid, { text }));
-        logger.debug({ event: 'message_sent', jid, textLength: text.length });
-    } catch (error: any) {
-        const errMsg = error instanceof Error ? error.message : String(error);
-        logger.warn({ event: 'group_send_failed', jid, error: errMsg });
+    const dmJid = fallbackJid || currentFallbackJid;
 
-        // Fallback: DM para o remetente
-        const dmJid = fallbackJid || currentFallbackJid;
-        if (dmJid && dmJid !== jid) {
-            try {
-                await sock!.sendMessage(dmJid, {
-                    text: `[BeerBot 🍺]\n\n${text}`,
-                });
-                logger.info({
-                    event: 'dm_fallback_sent',
-                    originalJid: jid,
-                    fallbackJid: dmJid,
-                });
-            } catch (dmError: any) {
-                logger.error({
-                    event: 'dm_fallback_failed',
-                    fallbackJid: dmJid,
-                    error: dmError instanceof Error ? dmError.message : String(dmError),
-                });
-            }
+    if (!shouldSkipGroupSend(jid)) {
+        const sent = await tryGroupSend(jid, () =>
+            withRetry(() => sock!.sendMessage(jid, { text }))
+        );
+        if (sent) {
+            logger.debug({ event: 'message_sent', jid, textLength: text.length });
+            return;
+        }
+    } else {
+        logger.debug({ event: 'lid_circuit_breaker_active', jid });
+    }
+
+    // DM fallback
+    if (dmJid && dmJid !== jid) {
+        try {
+            await sendDM(dmJid, text, jid);
+        } catch (err: any) {
+            logger.error({ event: 'dm_fallback_failed', fallbackJid: dmJid, error: String(err) });
         }
     }
 }
 
 /**
- * Responde a uma mensagem
+ * Responde a uma mensagem (com ou sem quote).
  */
 export async function replyToMessage(
     jid: string,
@@ -356,44 +411,36 @@ export async function replyToMessage(
 ): Promise<void> {
     if (!sock) throw new Error('Socket não conectado');
 
-    try {
-        // Para participantes @lid, não usar quoted (corrompe sessão)
-        const participant = quotedMessage.key?.participant || quotedMessage.key?.remoteJid || '';
-        if (participant.includes('@lid')) {
-            await withRetry(() => sock!.sendMessage(jid, { text }));
-        } else {
-            await withRetry(() => sock!.sendMessage(jid, { text }, { quoted: quotedMessage as any }));
-        }
-        logger.debug({ event: 'reply_sent', jid, textLength: text.length });
-    } catch (error: any) {
-        const errMsg = error instanceof Error ? error.message : String(error);
-        logger.warn({ event: 'group_reply_failed', jid, error: errMsg });
+    const dmJid = fallbackJid || quotedMessage.key?.participant || currentFallbackJid || '';
 
-        // Fallback: DM para o remetente
-        const dmJid = fallbackJid || quotedMessage.key?.participant || '';
-        if (dmJid && dmJid !== jid) {
-            try {
-                await sock!.sendMessage(dmJid, {
-                    text: `[BeerBot 🍺]\n\n${text}`,
-                });
-                logger.info({
-                    event: 'dm_fallback_sent',
-                    originalJid: jid,
-                    fallbackJid: dmJid,
-                });
-            } catch (dmError: any) {
-                logger.error({
-                    event: 'dm_fallback_failed',
-                    fallbackJid: dmJid,
-                    error: dmError instanceof Error ? dmError.message : String(dmError),
-                });
-            }
+    if (!shouldSkipGroupSend(jid)) {
+        const participant = quotedMessage.key?.participant || quotedMessage.key?.remoteJid || '';
+        const useQuote = !participant.includes('@lid');
+        const sent = await tryGroupSend(jid, () =>
+            useQuote
+                ? withRetry(() => sock!.sendMessage(jid, { text }, { quoted: quotedMessage as any }))
+                : withRetry(() => sock!.sendMessage(jid, { text }))
+        );
+        if (sent) {
+            logger.debug({ event: 'reply_sent', jid, textLength: text.length });
+            return;
+        }
+    } else {
+        logger.debug({ event: 'lid_circuit_breaker_active', jid });
+    }
+
+    // DM fallback
+    if (dmJid && dmJid !== jid) {
+        try {
+            await sendDM(dmJid, text, jid);
+        } catch (err: any) {
+            logger.error({ event: 'dm_fallback_failed', fallbackJid: dmJid, error: String(err) });
         }
     }
 }
 
 /**
- * Reage a uma mensagem
+ * Reage a uma mensagem. Pula silenciosamente se circuit breaker ativo.
  */
 export async function reactToMessage(
     jid: string,
@@ -401,24 +448,18 @@ export async function reactToMessage(
     emoji: string
 ): Promise<void> {
     if (!sock) throw new Error('Socket não conectado');
+    if (shouldSkipGroupSend(jid)) return;
 
-    // Silenciosamente ignora reações em grupos LID (sempre causam crash)
+    if (isLidGroup(jid)) {
+        lastLidGroupSendAttempt = Date.now();
+    }
     try {
         await withRetry(() => sock!.sendMessage(jid, {
-            react: {
-                text: emoji,
-                key: messageKey,
-            },
+            react: { text: emoji, key: messageKey },
         }));
         logger.debug({ event: 'reaction_sent', jid, emoji });
     } catch (error: any) {
-        // Reações falhando não devem impedir o fluxo
-        logger.warn({
-            event: 'reaction_failed',
-            jid,
-            emoji,
-            error: error instanceof Error ? error.message : String(error),
-        });
+        logger.warn({ event: 'reaction_failed', jid, emoji, error: String(error) });
     }
 }
 
