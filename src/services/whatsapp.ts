@@ -115,7 +115,6 @@ export async function connectWhatsApp(): Promise<WASocket> {
         logger: baileyLogger,
         browser: ['Mac OS', 'Chrome', '1.0.0'], // "BeerBot" name sometimes gets flagged
         syncFullHistory: false,
-        fireInitQueries: false, // Prevents WA from trying to push heavy initial data
         markOnlineOnConnect: false,
         connectTimeoutMs: 60_000,
         keepAliveIntervalMs: 30_000,
