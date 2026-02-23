@@ -137,7 +137,7 @@ export async function connectWhatsApp(): Promise<WASocket> {
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
 
-        if (qr && !process.env.BOT_PHONE_NUMBER) {
+        if (qr) {
             logger.info({ event: 'qr_code_generated' });
             console.log('\n📱 Escaneie o QR Code abaixo para conectar:\n');
             qrcode.generate(qr, { small: true });
