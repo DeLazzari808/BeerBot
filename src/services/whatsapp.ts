@@ -4,6 +4,7 @@ import makeWASocket, {
     WASocket,
     proto,
     WAMessageKey,
+    fetchLatestBaileysVersion, // Adicionado para buscar a última versão do WA Web
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import fs from 'fs';
@@ -105,12 +106,16 @@ export async function connectWhatsApp(): Promise<WASocket> {
     }
 
     const { state, saveCreds } = await useMultiFileAuthState(config.paths.auth);
+    const { version, isLatest } = await fetchLatestBaileysVersion();
+    logger.info({ event: 'whatsapp_version_fetched', version, isLatest });
 
     sock = makeWASocket({
+        version,
         auth: state,
         logger: baileyLogger,
         browser: ['Mac OS', 'Chrome', '1.0.0'], // "BeerBot" name sometimes gets flagged
         syncFullHistory: false,
+        fireInitQueries: false, // Prevents WA from trying to push heavy initial data
         markOnlineOnConnect: false,
         connectTimeoutMs: 60_000,
         keepAliveIntervalMs: 30_000,
