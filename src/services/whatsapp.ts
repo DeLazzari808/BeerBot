@@ -189,10 +189,12 @@ export async function connectWhatsApp(): Promise<WASocket> {
                         // chaves Signal para @lid, causando crash 1006 ao enviar
                         const filtered = {
                             ...metadata,
+                            // Forçar 'pn' faz Baileys codificar senderKeyJids como @s.whatsapp.net
+                            // (em vez de @lid) ao chamar assertSessions — formato que o servidor aceita
                             addressingMode: 'pn' as const,
-                            participants: metadata.participants.filter(
-                                p => !p.id.includes('@lid')
-                            ),
+                            // MANTER todos os participantes (não filtrar @lid)
+                            // Baileys normaliza @lid → @s.whatsapp.net internamente em getUSyncDevices
+                            participants: metadata.participants,
                         };
                         groupMetadataCache.set(config.groupId!, filtered);
                         logger.info({
