@@ -290,6 +290,16 @@ export async function replyToMessage(
 ): Promise<void> {
     if (!sock) throw new Error('Socket não conectado');
     logger.debug({ event: 'reply_sent', jid, textLength: text.length });
+
+    // SAFEGUARD: Em Baileys rc.6 as respostas a destinatários @lid corrompem a sessão
+    // Se o remetente for @lid, envia apenas texto normal sem citar a mensagem
+    const participant = quotedMessage.key?.participant || quotedMessage.key?.remoteJid || '';
+    if (participant.includes('@lid')) {
+        logger.warn({ event: 'reply_to_lid_fallback', participant });
+        await withRetry(() => sock!.sendMessage(jid, { text }));
+        return;
+    }
+
     await withRetry(() => sock!.sendMessage(jid, { text }, { quoted: quotedMessage as any }));
 }
 
@@ -303,6 +313,14 @@ export async function reactToMessage(
 ): Promise<void> {
     if (!sock) throw new Error('Socket não conectado');
     logger.debug({ event: 'reaction_sent', jid, emoji });
+
+    // SAFEGUARD: Reagir a destinatários @lid também pode corromper a conexão
+    const participant = messageKey.participant || messageKey.remoteJid || '';
+    if (participant.includes('@lid')) {
+        logger.warn({ event: 'react_to_lid_skipped', participant });
+        return; // Não reage para evitar crash
+    }
+
     await withRetry(() => sock!.sendMessage(jid, {
         react: {
             text: emoji,
