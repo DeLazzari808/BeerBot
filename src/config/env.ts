@@ -19,7 +19,7 @@ export const config = {
     // Caminhos
     paths: {
         database: path.join(process.cwd(), 'data', 'beer.db'),
-        auth: path.join(process.cwd(), 'auth_info_baileys_nova'),
+        auth: path.join(process.cwd(), 'auth_info'),
     },
 
     // Prefixo de comandos
