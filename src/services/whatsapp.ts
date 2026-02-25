@@ -81,13 +81,21 @@ export async function connectWhatsApp(): Promise<WASocket> {
         if (connection === 'close') {
             const reason = (lastDisconnect?.error as Boom)?.output?.statusCode;
 
-            if (reason === DisconnectReason.loggedOut || reason === 405) {
-                // 405 = invalid/expired session, needs re-auth (same as loggedOut)
-                logger.error({ event: 'whatsapp_logged_out', reason });
+            if (reason === DisconnectReason.loggedOut) {
+                logger.error({ event: 'whatsapp_logged_out' });
                 fs.rmSync(config.paths.auth, { recursive: true, force: true });
                 process.exit(1);
+            } else if (reason === 405) {
+                // 405 = session rejected — clear auth and retry with long delay
+                // Don't process.exit — just clean auth and reconnect
+                logger.warn({ event: 'whatsapp_405_session_rejected', reconnectAttempt: reconnectAttempts });
+                fs.rmSync(config.paths.auth, { recursive: true, force: true });
+                const delay = Math.max(10000, getReconnectDelay());
+                setTimeout(() => {
+                    connectWhatsApp();
+                }, delay);
             } else if (reason === 428) {
-                // 428 = rate limit / too many requests — fast reconnect
+                // 428 = rate limit — fast reconnect
                 const delay = 2000;
                 logger.warn({
                     event: 'whatsapp_428_rate_limit',
