@@ -81,8 +81,9 @@ export async function connectWhatsApp(): Promise<WASocket> {
         if (connection === 'close') {
             const reason = (lastDisconnect?.error as Boom)?.output?.statusCode;
 
-            if (reason === DisconnectReason.loggedOut) {
-                logger.error({ event: 'whatsapp_logged_out' });
+            if (reason === DisconnectReason.loggedOut || reason === 405) {
+                // 405 = invalid/expired session, needs re-auth (same as loggedOut)
+                logger.error({ event: 'whatsapp_logged_out', reason });
                 fs.rmSync(config.paths.auth, { recursive: true, force: true });
                 process.exit(1);
             } else if (reason === 428) {
