@@ -17,6 +17,7 @@ import {
 
 let sock: WASocket | null = null;
 let reconnectAttempts = 0;
+let hasForceLoggedOut = false;
 
 export type MessageHandler = (message: proto.IWebMessageInfo) => Promise<void>;
 export type DeleteHandler = (messageId: string, jid: string) => Promise<void>;
@@ -52,8 +53,9 @@ function resetReconnectAttempts(): void {
 }
 
 export async function connectWhatsApp(): Promise<WASocket> {
-    // Força logout se configurado via ENV
-    if (process.env.FORCE_LOGOUT === 'true') {
+    // Força logout apenas na PRIMEIRA tentativa de conexão do processo
+    if (process.env.FORCE_LOGOUT === 'true' && !hasForceLoggedOut) {
+        hasForceLoggedOut = true;
         logger.warn({ event: 'force_logout_triggered' });
         if (fs.existsSync(config.paths.auth)) {
             fs.rmSync(config.paths.auth, { recursive: true, force: true });
@@ -71,8 +73,9 @@ export async function connectWhatsApp(): Promise<WASocket> {
     sock = makeWASocket({
         auth: state,
         logger: baileyLogger,
-        browser: ['BeerBot', 'Chrome', '1.0.0'],
-        printQRInTerminal: false, // Desativamos o padrão para usar o nosso formatado
+        // Usando um browser mais comum para evitar erro 405
+        browser: ['Ubuntu', 'Chrome', '110.0.5563.147'],
+        printQRInTerminal: true, // Baileys tem um fallback interno melhor para QR
     });
 
     // Salva credenciais quando atualizadas
@@ -84,7 +87,8 @@ export async function connectWhatsApp(): Promise<WASocket> {
 
         if (qr) {
             logger.info({ event: 'qr_code_generated' });
-            console.log('\n--- QR CODE GERADO ---');
+            console.log('\n--- QR CODE ABAIXO ---');
+            // Mantemos o qrcode-terminal como redundância
             qrcode.generate(qr, { small: true });
             console.log('----------------------\n');
         }
@@ -94,6 +98,18 @@ export async function connectWhatsApp(): Promise<WASocket> {
             logger.info({ event: 'connection_closed', reason });
 
             if (reason === DisconnectReason.loggedOut) {
+                logger.error({ event: 'whatsapp_logged_out' });
+                fs.rmSync(config.paths.auth, { recursive: true, force: true });
+                process.exit(1);
+            } else if (reason === 405) {
+                // 405 = session rejected — clear auth and retry with long delay
+                logger.warn({ event: 'whatsapp_405_session_rejected', reconnectAttempt: reconnectAttempts });
+                fs.rmSync(config.paths.auth, { recursive: true, force: true });
+                const delay = Math.max(15000, getReconnectDelay());
+                setTimeout(() => {
+                    connectWhatsApp();
+                }, delay);
+            } else if (reason === 428) {
                 logger.error({ event: 'whatsapp_logged_out' });
                 fs.rmSync(config.paths.auth, { recursive: true, force: true });
                 process.exit(1);
