@@ -73,9 +73,12 @@ export async function connectWhatsApp(): Promise<WASocket> {
     sock = makeWASocket({
         auth: state,
         logger: baileyLogger,
-        // Usando um browser mais comum para evitar erro 405
-        browser: ['Ubuntu', 'Chrome', '110.0.5563.147'],
-        printQRInTerminal: true, // Baileys tem um fallback interno melhor para QR
+        // Browser mais estável (Windows + Edge)
+        browser: ['Windows', 'Edge', '121.0.2277.128'],
+        syncFullHistory: false, // Reduz carga inicial
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 0,
+        keepAliveIntervalMs: 10000,
     });
 
     // Salva credenciais quando atualizadas
@@ -87,10 +90,11 @@ export async function connectWhatsApp(): Promise<WASocket> {
 
         if (qr) {
             logger.info({ event: 'qr_code_generated' });
-            console.log('\n--- QR CODE ABAIXO ---');
-            // Mantemos o qrcode-terminal como redundância
+            console.log('\n==================================================');
+            console.log('📱 ESCANEIE O QR CODE ABAIXO NO SEU WHATSAPP:');
+            console.log('==================================================\n');
             qrcode.generate(qr, { small: true });
-            console.log('----------------------\n');
+            console.log('\n==================================================\n');
         }
 
         if (connection === 'close') {
@@ -102,10 +106,12 @@ export async function connectWhatsApp(): Promise<WASocket> {
                 fs.rmSync(config.paths.auth, { recursive: true, force: true });
                 process.exit(1);
             } else if (reason === 405) {
-                // 405 = session rejected — clear auth and retry with long delay
+                // 405 = session rejected — clear auth and retry with LONG delay
                 logger.warn({ event: 'whatsapp_405_session_rejected', reconnectAttempt: reconnectAttempts });
                 fs.rmSync(config.paths.auth, { recursive: true, force: true });
-                const delay = Math.max(15000, getReconnectDelay());
+                
+                // Espera 30 segundos antes de tentar de novo para não ser bloqueado por IP
+                const delay = 30000;
                 setTimeout(() => {
                     connectWhatsApp();
                 }, delay);
