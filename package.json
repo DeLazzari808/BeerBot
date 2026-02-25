@@ -8,8 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit",
-    "postinstall": "node scripts/patch-baileys.js"
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "whatsapp",
