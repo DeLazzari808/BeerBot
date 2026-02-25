@@ -16,6 +16,9 @@ export const config = {
         .map(n => n.trim())
         .filter(Boolean),
 
+    // Número para Pairing Code (opcional)
+    phoneNumber: process.env.PHONE_NUMBER || '',
+
     // Caminhos
     paths: {
         database: path.join(process.cwd(), 'data', 'beer.db'),

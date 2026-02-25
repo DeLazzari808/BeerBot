@@ -4,6 +4,7 @@ import makeWASocket, {
     WASocket,
     proto,
     WAMessageKey,
+    fetchLatestBaileysVersion,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import fs from 'fs';
@@ -69,17 +70,37 @@ export async function connectWhatsApp(): Promise<WASocket> {
     }
 
     const { state, saveCreds } = await useMultiFileAuthState(config.paths.auth);
+    const { version } = await fetchLatestBaileysVersion();
 
     sock = makeWASocket({
         auth: state,
+        version,
         logger: baileyLogger,
-        // Browser mais estável (Windows + Edge)
-        browser: ['Windows', 'Edge', '121.0.2277.128'],
-        syncFullHistory: false, // Reduz carga inicial
+        // Browser padrão Baileys (mais seguro contra 405)
+        browser: ['Windows', 'Chrome', '122.0.0.0'],
+        syncFullHistory: false,
         connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: 0,
-        keepAliveIntervalMs: 10000,
+        printQRInTerminal: false,
     });
+
+    // PAIRING CODE: Se configurado e não registrado, pede o código
+    if (config.phoneNumber && !state.creds.registered) {
+        // Delay para garantir que o socket está pronto para gerar o código
+        setTimeout(async () => {
+            try {
+                const code = await sock!.requestPairingCode(config.phoneNumber);
+                logger.info({ event: 'pairing_code_generated', phoneNumber: config.phoneNumber });
+                console.log('\n==================================================');
+                console.log('🔑 CÓDIGO DE PAREAMENTO:');
+                console.log(`\n       >>>   ${code}   <<< \n`);
+                console.log('Use seu WhatsApp em "Aparelhos Conectados"');
+                console.log('e escolha "Conectar com número de telefone".');
+                console.log('==================================================\n');
+            } catch (error) {
+                logger.error({ event: 'pairing_code_failed', error: String(error) });
+            }
+        }, 3000);
+    }
 
     // Salva credenciais quando atualizadas
     sock.ev.on('creds.update', saveCreds);
@@ -88,7 +109,7 @@ export async function connectWhatsApp(): Promise<WASocket> {
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
 
-        if (qr) {
+        if (qr && !config.phoneNumber) {
             logger.info({ event: 'qr_code_generated' });
             console.log('\n==================================================');
             console.log('📱 ESCANEIE O QR CODE ABAIXO NO SEU WHATSAPP:');
@@ -116,21 +137,8 @@ export async function connectWhatsApp(): Promise<WASocket> {
                     connectWhatsApp();
                 }, delay);
             } else if (reason === 428) {
-                logger.error({ event: 'whatsapp_logged_out' });
-                fs.rmSync(config.paths.auth, { recursive: true, force: true });
-                process.exit(1);
-            } else if (reason === 405) {
-                // 405 = session rejected — clear auth and retry with long delay
-                // Don't process.exit — just clean auth and reconnect
-                logger.warn({ event: 'whatsapp_405_session_rejected', reconnectAttempt: reconnectAttempts });
-                fs.rmSync(config.paths.auth, { recursive: true, force: true });
-                const delay = Math.max(10000, getReconnectDelay());
-                setTimeout(() => {
-                    connectWhatsApp();
-                }, delay);
-            } else if (reason === 428) {
                 // 428 = rate limit — fast reconnect
-                const delay = 2000;
+                const delay = 5000;
                 logger.warn({
                     event: 'whatsapp_428_rate_limit',
                     reconnectAttempt: reconnectAttempts,
