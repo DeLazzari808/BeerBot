@@ -74,10 +74,16 @@ function isAdmin(userId: string): boolean {
     const cleanId = userId.replace('@s.whatsapp.net', '').replace('@lid', '');
 
     // Verifica se bate com algum admin (número ou ID completo)
-    return config.adminNumbers.some(admin => {
+    const result = config.adminNumbers.some(admin => {
         const cleanAdmin = admin.replace('@s.whatsapp.net', '').replace('@lid', '');
         return cleanId === cleanAdmin || userId === admin;
     });
+
+    if (!result && config.adminNumbers.length > 0) {
+        logger.debug({ event: 'admin_check_failed', userId, cleanId, configuredAdmins: config.adminNumbers });
+    }
+
+    return result;
 }
 
 /**
