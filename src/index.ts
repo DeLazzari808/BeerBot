@@ -83,8 +83,23 @@ async function main(): Promise<void> {
     process.on('SIGTERM', () => shutdown('SIGTERM'));
 
     // Handler para erros não tratados
+    // Only crash on truly fatal errors — transient network errors are logged and survived
     process.on('uncaughtException', (error) => {
         logger.error({ event: 'uncaught_exception', error: error.message, stack: error.stack });
+
+        const isTransient =
+            error.message?.includes('terminated') ||
+            error.message?.includes('ECONNRESET') ||
+            error.message?.includes('ECONNREFUSED') ||
+            error.message?.includes('ETIMEDOUT') ||
+            error.message?.includes('fetch failed') ||
+            error.message?.includes('socket hang up');
+
+        if (isTransient) {
+            logger.warn({ event: 'transient_error_survived', error: error.message });
+            return;
+        }
+
         shutdown('uncaughtException');
     });
 

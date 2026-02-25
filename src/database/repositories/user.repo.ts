@@ -316,6 +316,88 @@ export const userRepository = {
         return result;
     },
 
+    /**
+     * Merge user records from oldUserId (@lid) into newUserId (@s.whatsapp.net).
+     * Transfers all counts and consolidates user stats.
+     * Returns true if any records were migrated.
+     */
+    async mergeUser(oldUserId: string, newUserId: string): Promise<boolean> {
+        const supabase = getSupabase();
+
+        // 1. Move all count records from old to new user
+        const { data: updatedCounts, error: countsError } = await supabase
+            .from('counts')
+            .update({ user_id: newUserId })
+            .eq('user_id', oldUserId)
+            .select('id');
+
+        if (countsError) {
+            logger.error({ event: 'merge_user_counts_error', oldUserId, newUserId, error: countsError.message });
+            return false;
+        }
+
+        const migratedCount = updatedCounts?.length || 0;
+        if (migratedCount === 0) {
+            // No count records to migrate — check if there's an orphan user record
+            const { data: oldUser } = await supabase
+                .from('users')
+                .select('total_count')
+                .eq('id', oldUserId)
+                .single();
+
+            if (oldUser && oldUser.total_count > 0) {
+                // Orphan user with total but no counts — just delete it
+                await supabase.from('users').delete().eq('id', oldUserId);
+                logger.info({ event: 'merge_user_orphan_deleted', oldUserId });
+            }
+            return false;
+        }
+
+        // 2. Check if both user records exist
+        const [oldResult, newResult] = await Promise.all([
+            supabase.from('users').select('*').eq('id', oldUserId).single(),
+            supabase.from('users').select('*').eq('id', newUserId).single(),
+        ]);
+
+        const oldUser = oldResult.data as UserRow | null;
+        const newUser = newResult.data as UserRow | null;
+
+        if (oldUser && newUser) {
+            // Both exist: add old total to new, delete old
+            const newTotal = newUser.total_count + oldUser.total_count;
+            const latestAt = oldUser.last_count_at && newUser.last_count_at
+                ? (oldUser.last_count_at > newUser.last_count_at ? oldUser.last_count_at : newUser.last_count_at)
+                : oldUser.last_count_at || newUser.last_count_at;
+
+            await supabase
+                .from('users')
+                .update({ total_count: newTotal, last_count_at: latestAt })
+                .eq('id', newUserId);
+
+            await supabase.from('users').delete().eq('id', oldUserId);
+        } else if (oldUser && !newUser) {
+            // Only old exists: rename the user record
+            // Supabase doesn't support updating primary key, so insert new + delete old
+            await supabase.from('users').insert({
+                id: newUserId,
+                name: oldUser.name,
+                total_count: oldUser.total_count,
+                last_count_at: oldUser.last_count_at,
+            });
+            await supabase.from('users').delete().eq('id', oldUserId);
+        }
+        // If only newUser exists (or neither), counts were already moved — nothing else to do
+
+        logger.info({
+            event: 'merge_user_complete',
+            oldUserId,
+            newUserId,
+            countsMigrated: migratedCount,
+        });
+
+        return true;
+    },
+
     mapRow(row: UserRow): UserStats {
         return {
             id: row.id,

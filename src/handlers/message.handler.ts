@@ -7,6 +7,7 @@ import { logger } from '../utils/logger.js';
 import { handleCommand } from './command.handler.js';
 import { messageQueue } from '../utils/queue.js';
 import { maybeGetDonateHint } from '../config/donate.js';
+import { userRepository } from '../database/repositories/user.repo.js';
 import {
     MILESTONE_HUNDRED,
     MILESTONE_THOUSAND,
@@ -39,14 +40,44 @@ function hasImage(message: proto.IWebMessageInfo): boolean {
 }
 
 /**
- * Extrai o ID do remetente
+ * Extrai o ID do remetente.
+ * Prefers participantAlt (@s.whatsapp.net) over participant (@lid) in LID groups
+ * to maintain backward compatibility with existing database records.
  */
 function getSenderId(message: proto.IWebMessageInfo): string | null {
-    const id = message.key?.participant || message.key?.remoteJid || null;
+    const key = message.key as proto.IMessageKey & { participantAlt?: string };
+    const id = key?.participantAlt || key?.participant || key?.remoteJid || null;
     if (!id || id === '') {
         return null;
     }
     return id;
+}
+
+/**
+ * Extrai o participant @lid (se existir) para auto-merge
+ */
+function getLidParticipant(message: proto.IWebMessageInfo): string | null {
+    const participant = message.key?.participant;
+    if (participant && participant.endsWith('@lid')) {
+        return participant;
+    }
+    return null;
+}
+
+// Track users already checked for merge this session to avoid redundant DB queries
+const mergedUsers = new Set<string>();
+
+/**
+ * Auto-merge: if user has records under @lid, merge them into @s.whatsapp.net.
+ * Fire-and-forget — does not block message processing.
+ */
+function tryAutoMerge(lidId: string, legacyId: string): void {
+    if (mergedUsers.has(lidId)) return;
+    mergedUsers.add(lidId);
+
+    userRepository.mergeUser(lidId, legacyId).catch((err) => {
+        logger.warn({ event: 'auto_merge_error', lidId, legacyId, error: String(err) });
+    });
 }
 
 /**
@@ -88,6 +119,12 @@ export async function handleMessage(message: proto.IWebMessageInfo): Promise<voi
     if (!senderId) {
         logger.warn({ event: 'message_without_sender', jid });
         return;
+    }
+
+    // Auto-merge: if LID participant exists and differs from senderId, merge records
+    const lidId = getLidParticipant(message);
+    if (lidId && lidId !== senderId) {
+        tryAutoMerge(lidId, senderId);
     }
 
     const senderName = getSenderName(message);

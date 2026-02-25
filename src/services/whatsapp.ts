@@ -85,6 +85,18 @@ export async function connectWhatsApp(): Promise<WASocket> {
                 logger.error({ event: 'whatsapp_logged_out' });
                 fs.rmSync(config.paths.auth, { recursive: true, force: true });
                 process.exit(1);
+            } else if (reason === 428) {
+                // 428 = rate limit / too many requests — fast reconnect
+                const delay = 2000;
+                logger.warn({
+                    event: 'whatsapp_428_rate_limit',
+                    reconnectAttempt: reconnectAttempts,
+                    delayMs: delay,
+                });
+                reconnectAttempts++;
+                setTimeout(() => {
+                    connectWhatsApp();
+                }, delay);
             } else {
                 const delay = getReconnectDelay();
                 logger.warn({
@@ -187,19 +199,31 @@ export async function replyToMessage(
 }
 
 /**
- * Reage a uma mensagem
+ * Reage a uma mensagem.
+ * Wrapped in try/catch because reactions use SenderKey encryption
+ * which may fail for some participants in LID groups. Reactions are
+ * cosmetic so failures are silently logged.
  */
 export async function reactToMessage(
     jid: string,
     messageKey: WAMessageKey,
     emoji: string
 ): Promise<void> {
-    if (!sock) throw new Error('Socket não conectado');
-    logger.debug({ event: 'reaction_sent', jid, emoji });
-    await sock.sendMessage(jid, {
-        react: {
-            text: emoji,
-            key: messageKey,
-        },
-    });
+    if (!sock) return;
+    try {
+        logger.debug({ event: 'reaction_sent', jid, emoji });
+        await sock.sendMessage(jid, {
+            react: {
+                text: emoji,
+                key: messageKey,
+            },
+        });
+    } catch (error) {
+        logger.warn({
+            event: 'reaction_failed',
+            jid,
+            emoji,
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }
 }

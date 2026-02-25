@@ -99,7 +99,7 @@ function checkRateLimit(userId: string): { allowed: boolean; waitTime?: number }
 }
 
 // Lista de comandos públicos para rate limiting
-const PUBLIC_COMMANDS = ['status', 's', 'rank', 'ranking', 'top', 'elo', 'elos', 'help', 'ajuda', 'comandos', 'hoje', 'semana', 'week', 'donate', 'pix', 'doar'];
+const PUBLIC_COMMANDS = ['status', 's', 'rank', 'ranking', 'top', 'elo', 'elos', 'help', 'ajuda', 'comandos', 'hoje', 'semana', 'week', 'donate', 'pix', 'doar', 'resgatar'];
 
 // Lista de comandos válidos para detectar comandos desconhecidos
 const VALID_COMMANDS = [...PUBLIC_COMMANDS, 'audit', 'auditoria', 'setcount', 'iniciar', 'fix', 'forcar', 'recap', 'recalc', 'sync', 'del', 'deletar', 'setuser', 'banvagabundos', 'testban'];
@@ -191,6 +191,10 @@ export async function handleCommand(
                 await handleDonate(jid);
                 break;
 
+            case 'resgatar':
+                await handleResgatar(message, senderId, jid);
+                break;
+
             case 'audit':
             case 'auditoria':
                 if (!isAdmin(senderId)) {
@@ -258,6 +262,46 @@ export async function handleCommand(
     } catch (error) {
         logger.error({ event: 'command_error', command, error: error instanceof Error ? error.message : String(error) });
         await replyToMessage(jid, '❌ Ocorreu um erro ao processar o comando. Tente novamente.', message);
+    }
+}
+
+/**
+ * Handles /resgatar — manually triggers merge of @lid records into @s.whatsapp.net.
+ * Extracts both participant (@lid) and participantAlt (@s.whatsapp.net) from the message.
+ */
+async function handleResgatar(
+    message: proto.IWebMessageInfo,
+    senderId: string,
+    jid: string
+): Promise<void> {
+    const key = message.key as proto.IMessageKey & { participantAlt?: string };
+    const lidId = key?.participant;
+    const legacyId = key?.participantAlt;
+
+    // Need both IDs to perform merge
+    if (!lidId || !lidId.endsWith('@lid') || !legacyId) {
+        await replyToMessage(
+            jid,
+            '✅ Seu grupo não usa LID ou suas cervejas já estão no formato correto. Nada a migrar!',
+            message
+        );
+        return;
+    }
+
+    const merged = await userRepository.mergeUser(lidId, legacyId);
+    if (merged) {
+        logger.info({ event: 'resgatar_success', lidId, legacyId, triggeredBy: senderId });
+        await replyToMessage(
+            jid,
+            `✅ *Cervejas resgatadas!* 🍺\n\nSuas contagens do ID antigo foram migradas com sucesso.`,
+            message
+        );
+    } else {
+        await replyToMessage(
+            jid,
+            '✅ Nenhuma cerveja para migrar — suas contagens já estão corretas!',
+            message
+        );
     }
 }
 
@@ -446,6 +490,7 @@ async function handleHelp(jid: string, isUserAdmin: boolean): Promise<void> {
         `*/hoje* — Estatísticas de hoje\n` +
         `*/semana* — Estatísticas da semana\n` +
         `*/pix* — Pagar uma gelada pro bot 🍻\n` +
+        `*/resgatar* — Resgatar cervejas do ID antigo\n` +
         `*/help* — Esta mensagem\n\n` +
         `📝 *COMO CONTAR*\n` +
         `Envie uma foto da cerveja! O bot conta automaticamente.\n` +
