@@ -52,6 +52,15 @@ function resetReconnectAttempts(): void {
 }
 
 export async function connectWhatsApp(): Promise<WASocket> {
+    // Força logout se configurado via ENV
+    if (process.env.FORCE_LOGOUT === 'true') {
+        logger.warn({ event: 'force_logout_triggered' });
+        if (fs.existsSync(config.paths.auth)) {
+            fs.rmSync(config.paths.auth, { recursive: true, force: true });
+            logger.info({ event: 'auth_directory_cleared' });
+        }
+    }
+
     // Garante que o diretório de auth existe
     if (!fs.existsSync(config.paths.auth)) {
         fs.mkdirSync(config.paths.auth, { recursive: true });
@@ -63,6 +72,7 @@ export async function connectWhatsApp(): Promise<WASocket> {
         auth: state,
         logger: baileyLogger,
         browser: ['BeerBot', 'Chrome', '1.0.0'],
+        printQRInTerminal: false, // Desativamos o padrão para usar o nosso formatado
     });
 
     // Salva credenciais quando atualizadas
@@ -74,12 +84,14 @@ export async function connectWhatsApp(): Promise<WASocket> {
 
         if (qr) {
             logger.info({ event: 'qr_code_generated' });
-            console.log('\n📱 Escaneie o QR Code abaixo para conectar:\n');
+            console.log('\n--- QR CODE GERADO ---');
             qrcode.generate(qr, { small: true });
+            console.log('----------------------\n');
         }
 
         if (connection === 'close') {
             const reason = (lastDisconnect?.error as Boom)?.output?.statusCode;
+            logger.info({ event: 'connection_closed', reason });
 
             if (reason === DisconnectReason.loggedOut) {
                 logger.error({ event: 'whatsapp_logged_out' });

@@ -23,11 +23,15 @@ function getMessageText(message: proto.IWebMessageInfo): string | null {
     const msg = message.message;
     if (!msg) return null;
 
+    // Extrai de mensagens normais, citadas ou com mídia
     return (
         msg.conversation ||
         msg.extendedTextMessage?.text ||
         msg.imageMessage?.caption ||
         msg.videoMessage?.caption ||
+        msg.viewOnceMessageV2?.message?.imageMessage?.caption ||
+        msg.viewOnceMessageV2Extension?.message?.imageMessage?.caption ||
+        msg.viewOnceMessageV2?.message?.videoMessage?.caption ||
         null
     );
 }
@@ -36,7 +40,14 @@ function getMessageText(message: proto.IWebMessageInfo): string | null {
  * Verifica se a mensagem tem imagem
  */
 function hasImage(message: proto.IWebMessageInfo): boolean {
-    return !!message.message?.imageMessage;
+    const msg = message.message;
+    if (!msg) return false;
+
+    return (
+        !!msg.imageMessage ||
+        !!msg.viewOnceMessageV2?.message?.imageMessage ||
+        !!msg.viewOnceMessageV2Extension?.message?.imageMessage
+    );
 }
 
 /**
@@ -96,6 +107,10 @@ export async function handleMessage(message: proto.IWebMessageInfo): Promise<voi
 
     // Filtra apenas mensagens do grupo configurado
     if (config.groupId && jid !== config.groupId) {
+        // Log para ajudar a debugar se o ID do grupo mudou
+        if (jid.endsWith('@g.us')) {
+            logger.warn({ event: 'message_ignored_wrong_group', receivedJid: jid, expectedJid: config.groupId });
+        }
         return;
     }
 
